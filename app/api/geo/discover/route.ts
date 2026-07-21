@@ -47,7 +47,7 @@ export async function GET(request: Request) {
     way(around:${Math.round(radius)},${lat},${lng})["power"~"line|minor_line|cable"];
     way(around:${Math.round(radius)},${lat},${lng})["railway"="rail"];
     way(around:${Math.round(radius)},${lat},${lng})["waterway"~"river|canal"];
-  );out tags center geom;
+  );out tags geom;
   (
     nwr(around:${Math.round(radius)},${lat},${lng})["power"~"substation|plant|generator"];
     nwr(around:${Math.round(radius)},${lat},${lng})["railway"~"station|halt|yard"];
@@ -71,7 +71,14 @@ export async function GET(request: Request) {
     const payload = (await response.json()) as { elements?: OverpassElement[]; osm3s?: { timestamp_osm_base?: string } };
     const features = (payload.elements ?? [])
       .map((element) => {
-        const point = element.center ?? (element.lat !== undefined && element.lon !== undefined ? { lat: element.lat, lon: element.lon } : null);
+        const geometry = element.geometry?.map((item) => [item.lat, item.lon] as [number, number]);
+        const geometryCenter = element.geometry?.length
+          ? {
+              lat: element.geometry.reduce((sum, item) => sum + item.lat, 0) / element.geometry.length,
+              lon: element.geometry.reduce((sum, item) => sum + item.lon, 0) / element.geometry.length,
+            }
+          : null;
+        const point = element.center ?? (element.lat !== undefined && element.lon !== undefined ? { lat: element.lat, lon: element.lon } : geometryCenter);
         if (!point) return null;
         const tags = element.tags ?? {};
         const kind = classify(tags);
@@ -83,7 +90,7 @@ export async function GET(request: Request) {
           longitude: point.lon,
           distanceKm: Number(distanceKm(lat, lng, point.lat, point.lon).toFixed(1)),
           detail: detailFor(tags),
-          geometry: element.geometry?.map((item) => [item.lat, item.lon] as [number, number]),
+          geometry,
           infrastructureType: tags.power ?? tags.railway ?? tags.waterway ?? tags.landuse ?? tags.man_made ?? tags.natural ?? kind,
           osmUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
         };

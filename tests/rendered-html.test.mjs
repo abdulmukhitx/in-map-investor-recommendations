@@ -83,7 +83,7 @@ test("source includes persistent storage, satellite screening, Leaflet and bound
   assert.match(discovery, /overpass-api\.de/);
   assert.match(discovery, /Math\.min\(30000/);
   assert.match(discovery, /line\|minor_line\|cable/);
-  assert.match(discovery, /out tags center geom/);
+  assert.match(discovery, /out tags geom/);
   assert.match(discovery, /out tags center 180/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(packageJson, /"leaflet"/);
