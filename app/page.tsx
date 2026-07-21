@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { LayerGroup, Map as LeafletMap } from "leaflet";
+import type { Layer, LayerGroup, Map as LeafletMap } from "leaflet";
 import type { CatalogSite, ProjectNeed, Sector } from "../lib/catalog";
 import "leaflet/dist/leaflet.css";
 
@@ -22,6 +22,8 @@ type LiveFeature = {
   longitude: number;
   distanceKm: number;
   detail: string;
+  geometry?: Array<[number, number]>;
+  infrastructureType?: string;
   osmUrl: string;
 };
 
@@ -34,9 +36,88 @@ type LiveMeta = {
 
 type Recommendation = { score: number; reasons: string[] };
 
+type AgroCellProps = {
+  cell_id: string;
+  latitude: number;
+  longitude: number;
+  area_km2: number;
+  confidence: number;
+  period: string;
+  ndvi: number;
+  ndwi: number;
+  ndre: number;
+  ndmi: number;
+  ndbi: number;
+  bsi: number;
+  active_vegetation_pct: number;
+  surface_water_pct: number;
+  soy: number;
+  rice: number;
+  cotton: number;
+  vegetables: number;
+  solar: number;
+  industrial_land: number;
+  best_crop: string;
+};
+
+type AgroFeature = { type: "Feature"; id?: string; properties: AgroCellProps; geometry: object };
+type AgroCollection = {
+  type: "FeatureCollection";
+  metadata: {
+    source: string;
+    method: string;
+    limitations: string[];
+    normalization_percentiles: Record<string, { p10: number; p90: number }>;
+  };
+  features: AgroFeature[];
+};
+
+type MapMode = "electricity" | "soy" | "rice" | "cotton" | "vegetables" | "ndvi" | "ndwi" | "ndbi";
+type AdviceProject = "soy" | "rice" | "cotton" | "vegetables" | "solar" | "factory";
+
 const sectors: Array<"All" | Sector> = ["All", "Agro", "Manufacturing", "Logistics", "Energy", "Tourism"];
 const sectorLabels: Record<string, string> = { All: "All", Agro: "Agro", Manufacturing: "Factory", Logistics: "Logistics", Energy: "Energy", Tourism: "Tourism" };
 const liveKinds: LiveFeature["kind"][] = ["power", "rail", "industry", "material", "water"];
+const mapModes: Array<{ id: MapMode; label: string; short: string }> = [
+  { id: "electricity", label: "Power grid / Электросеть", short: "Power" },
+  { id: "soy", label: "Soy / Соя", short: "Soy" },
+  { id: "rice", label: "Rice / Рис", short: "Rice" },
+  { id: "cotton", label: "Cotton / Хлопок", short: "Cotton" },
+  { id: "vegetables", label: "Vegetables / Овощи", short: "Vegetables" },
+  { id: "ndvi", label: "NDVI vegetation", short: "NDVI" },
+  { id: "ndwi", label: "NDWI water", short: "NDWI" },
+  { id: "ndbi", label: "NDBI built / dry", short: "NDBI" },
+];
+
+const adviceLabels: Record<AdviceProject, string> = {
+  soy: "Soy processing / Соя",
+  rice: "Rice farming / Рис",
+  cotton: "Cotton & textile / Хлопок",
+  vegetables: "Vegetables / Овощи",
+  solar: "Solar generation / Солнечная",
+  factory: "Factory / Производство",
+};
+
+function distanceBetween(lat1: number, lng1: number, lat2: number, lng2: number) {
+  const radians = (value: number) => value * Math.PI / 180;
+  const dLat = radians(lat2 - lat1);
+  const dLng = radians(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(lat1)) * Math.cos(radians(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function scoreColor(score: number) {
+  if (score >= 75) return "#087f6b";
+  if (score >= 55) return "#75a958";
+  if (score >= 35) return "#d7aa3c";
+  return "#b66b55";
+}
+
+function indexScore(value: number, key: "ndvi" | "ndwi" | "ndbi", data: AgroCollection) {
+  const range = data.metadata.normalization_percentiles[key];
+  if (!range || range.p90 <= range.p10) return 50;
+  return Math.max(0, Math.min(100, ((value - range.p10) / (range.p90 - range.p10)) * 100));
+}
 
 function evidenceLabel(site: CatalogSite) {
   if (site.evidenceLevel === "official") return "Official source";
@@ -78,6 +159,8 @@ export default function Home() {
   const leafletRef = useRef<typeof import("leaflet") | null>(null);
   const siteLayerRef = useRef<LayerGroup | null>(null);
   const liveLayerRef = useRef<LayerGroup | null>(null);
+  const agroLayerRef = useRef<LayerGroup | null>(null);
+  const boundaryLayerRef = useRef<LayerGroup | null>(null);
   const [sites, setSites] = useState<CatalogSite[]>([]);
   const [meta, setMeta] = useState<SitesMeta | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -91,6 +174,11 @@ export default function Home() {
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState("");
   const [liveLayers, setLiveLayers] = useState<Record<LiveFeature["kind"], boolean>>({ power: true, rail: true, industry: true, material: true, water: false });
+  const [agroData, setAgroData] = useState<AgroCollection | null>(null);
+  const [selectedCell, setSelectedCell] = useState<AgroCellProps | null>(null);
+  const [mapMode, setMapMode] = useState<MapMode>("electricity");
+  const [adviceProject, setAdviceProject] = useState<AdviceProject>("soy");
+  const [analysisTarget, setAnalysisTarget] = useState<{ latitude: number; longitude: number; label: string } | null>(null);
   const [planner, setPlanner] = useState<ProjectNeed>({ sector: "Manufacturing", landHa: 20, powerMw: 5, needsRail: false, material: "" });
   const [plannerOpen, setPlannerOpen] = useState(false);
   const [plannerLoading, setPlannerLoading] = useState(false);
@@ -101,6 +189,36 @@ export default function Home() {
   const selected = sites.find((site) => site.id === selectedId) ?? sites[0];
   const selectedRecommendation = selected ? recommendations[selected.id] : undefined;
   const selectedScore = selectedRecommendation?.score ?? selected?.baseScore ?? 0;
+
+  const locationAdvice = useMemo(() => {
+    if (!selectedCell) return null;
+    const satelliteScore = adviceProject === "factory" ? selectedCell.industrial_land : selectedCell[adviceProject];
+    const nearestPower = liveFeatures.filter((feature) => feature.kind === "power").sort((a, b) => a.distanceKm - b.distanceKm)[0];
+    const nearestRail = liveFeatures.filter((feature) => feature.kind === "rail").sort((a, b) => a.distanceKm - b.distanceKm)[0];
+    const nearestWater = liveFeatures.filter((feature) => feature.kind === "water").sort((a, b) => a.distanceKm - b.distanceKm)[0];
+    const nearestOfficial = [...sites].sort((a, b) => distanceBetween(selectedCell.latitude, selectedCell.longitude, a.latitude, a.longitude) - distanceBetween(selectedCell.latitude, selectedCell.longitude, b.latitude, b.longitude))[0];
+    const officialDistance = nearestOfficial ? distanceBetween(selectedCell.latitude, selectedCell.longitude, nearestOfficial.latitude, nearestOfficial.longitude) : null;
+
+    let infrastructureScore = 40;
+    if (nearestPower) infrastructureScore += nearestPower.distanceKm <= 5 ? 35 : nearestPower.distanceKm <= 15 ? 24 : nearestPower.distanceKm <= 30 ? 12 : 0;
+    if (nearestRail) infrastructureScore += nearestRail.distanceKm <= 10 ? 15 : nearestRail.distanceKm <= 25 ? 8 : 0;
+    if (nearestWater && adviceProject !== "factory" && adviceProject !== "solar") infrastructureScore += nearestWater.distanceKm <= 5 ? 20 : nearestWater.distanceKm <= 15 ? 12 : 4;
+    infrastructureScore = Math.min(100, infrastructureScore);
+
+    let score = Math.round(satelliteScore * (adviceProject === "factory" ? 0.55 : 0.7) + infrastructureScore * (adviceProject === "factory" ? 0.45 : 0.3));
+    if (adviceProject === "rice" && !nearestWater && selectedCell.surface_water_pct < 1) score = Math.max(0, score - 18);
+    const level = score >= 75 ? "Strong screening fit" : score >= 55 ? "Conditional fit" : "Low / verify alternatives";
+    const reasons = [
+      `Satellite ${adviceProject === "factory" ? "industrial-land" : adviceProject} signal: ${satelliteScore}/100`,
+      nearestPower ? `Mapped ${nearestPower.detail} electricity feature ${nearestPower.distanceKm} km away` : "No mapped electricity feature found within the current search radius",
+      adviceProject === "rice" ? (nearestWater ? `Mapped water/canal feature ${nearestWater.distanceKm} km away` : "Rice requires a verified irrigation source and water rights") : `NDVI ${selectedCell.ndvi.toFixed(3)}, NDWI ${selectedCell.ndwi.toFixed(3)}, NDBI ${selectedCell.ndbi.toFixed(3)}`,
+      officialDistance !== null && nearestOfficial ? `${nearestOfficial.name} is approximately ${officialDistance.toFixed(1)} km away` : "No investment-zone record nearby",
+    ];
+    const narrative = adviceProject === "factory"
+      ? `${level}. A factory is only practical here if the grid operator confirms connection capacity and the cadastral record permits industrial use. ${nearestRail ? `Rail is mapped ${nearestRail.distanceKm} km away.` : "Rail access was not found nearby."}`
+      : `${level}. The 2025 satellite mosaic shows relative land and moisture conditions for ${adviceLabels[adviceProject].split(" /")[0].toLowerCase()}. Before investment, test salinity, texture and drainage and confirm irrigation availability.`;
+    return { score, level, satelliteScore, infrastructureScore, reasons, narrative, nearestPower, nearestRail, nearestWater, nearestOfficial, officialDistance };
+  }, [adviceProject, liveFeatures, selectedCell, sites]);
 
   const rankedSites = useMemo(() => {
     if (!Object.keys(recommendations).length) return sites;
@@ -129,6 +247,20 @@ export default function Home() {
   }, [officialOnly, query, sector]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    fetch("/data/agro-suitability.geojson", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Agro layer returned ${response.status}`);
+        return response.json() as Promise<AgroCollection>;
+      })
+      .then(setAgroData)
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) console.error("Agro screening layer unavailable", error);
+      });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
     let active = true;
     async function initializeMap() {
       if (!mapContainer.current || mapRef.current) return;
@@ -143,6 +275,8 @@ export default function Home() {
           crossOrigin: true,
         }).addTo(map);
         L.control.zoom({ position: "bottomright" }).addTo(map);
+        boundaryLayerRef.current = L.layerGroup().addTo(map);
+        agroLayerRef.current = L.layerGroup().addTo(map);
         siteLayerRef.current = L.layerGroup().addTo(map);
         liveLayerRef.current = L.layerGroup().addTo(map);
         mapRef.current = map;
@@ -162,6 +296,77 @@ export default function Home() {
 
   useEffect(() => {
     const L = leafletRef.current;
+    const layer = boundaryLayerRef.current;
+    if (!L || !layer || mapStatus !== "ready") return;
+    const controller = new AbortController();
+    fetch("/data/turkistan-boundary.geojson", { signal: controller.signal })
+      .then((response) => response.json())
+      .then((boundary) => {
+        if (controller.signal.aborted) return;
+        layer.clearLayers();
+        L.geoJSON(boundary, { style: { color: "#173f3a", weight: 2, opacity: 0.8, fillOpacity: 0 } }).addTo(layer);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [mapStatus]);
+
+  useEffect(() => {
+    const L = leafletRef.current;
+    const layer = agroLayerRef.current;
+    if (!L || !layer || !agroData || mapStatus !== "ready") return;
+    layer.clearLayers();
+    if (mapMode === "electricity") return;
+
+    const rendered = L.geoJSON(agroData as never, {
+      style: (feature) => {
+        const props = (feature?.properties ?? {}) as AgroCellProps;
+        const value = mapMode === "ndvi" || mapMode === "ndwi" || mapMode === "ndbi"
+          ? indexScore(props[mapMode], mapMode, agroData)
+          : props[mapMode];
+        const isSelected = selectedCell?.cell_id === props.cell_id;
+        return {
+          color: isSelected ? "#123f39" : "#ffffff",
+          weight: isSelected ? 3 : 0.65,
+          opacity: isSelected ? 1 : 0.7,
+          fillColor: scoreColor(value),
+          fillOpacity: isSelected ? 0.78 : 0.58,
+        };
+      },
+      onEachFeature: (feature, mapLayer: Layer) => {
+        const props = (feature.properties ?? {}) as AgroCellProps;
+        const value = mapMode === "ndvi" || mapMode === "ndwi" || mapMode === "ndbi"
+          ? props[mapMode].toFixed(3)
+          : `${props[mapMode]}/100`;
+        mapLayer.bindTooltip(`<strong>${props.cell_id}</strong><br>${mapModes.find((item) => item.id === mapMode)?.label}: ${value}<br>Click for location advice`, { sticky: true });
+        mapLayer.on("click", () => {
+          setSelectedCell(props);
+          setAdviceProject(mapMode === "ndvi" || mapMode === "ndwi" || mapMode === "ndbi" ? "soy" : mapMode);
+          setAnalysisTarget({ latitude: props.latitude, longitude: props.longitude, label: props.cell_id });
+          mapRef.current?.flyTo([props.latitude, props.longitude], Math.max(mapRef.current.getZoom(), 9), { duration: 0.6 });
+        });
+      },
+    });
+    rendered.addTo(layer);
+  }, [agroData, mapMode, mapStatus, selectedCell?.cell_id]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !agroData || mapStatus !== "ready") return;
+    const handleMapClick = (event: { latlng: { lat: number; lng: number } }) => {
+      const nearest = [...agroData.features].sort((a, b) =>
+        distanceBetween(event.latlng.lat, event.latlng.lng, a.properties.latitude, a.properties.longitude)
+        - distanceBetween(event.latlng.lat, event.latlng.lng, b.properties.latitude, b.properties.longitude)
+      )[0]?.properties;
+      if (!nearest) return;
+      setSelectedCell(nearest);
+      setAnalysisTarget({ latitude: event.latlng.lat, longitude: event.latlng.lng, label: nearest.cell_id });
+    };
+    map.on("click", handleMapClick);
+    return () => { map.off("click", handleMapClick); };
+  }, [agroData, mapStatus]);
+
+  useEffect(() => {
+    const L = leafletRef.current;
     const layer = siteLayerRef.current;
     if (!L || !layer || mapStatus !== "ready") return;
     layer.clearLayers();
@@ -174,7 +379,11 @@ export default function Home() {
         iconAnchor: [22, 44],
       });
       const marker = L.marker([site.latitude, site.longitude], { icon, title: site.name, riseOnHover: true });
-      marker.on("click", () => setSelectedId(site.id));
+      marker.on("click", () => {
+        setSelectedId(site.id);
+        setSelectedCell(null);
+        setAnalysisTarget(null);
+      });
       marker.bindTooltip(`<strong>${site.name}</strong><br>${evidenceLabel(site)} · ${score} fit`, { direction: "top", offset: [0, -36] });
       marker.addTo(layer);
     });
@@ -186,23 +395,37 @@ export default function Home() {
     if (!L || !layer || mapStatus !== "ready") return;
     layer.clearLayers();
     liveFeatures.filter((feature) => liveLayers[feature.kind]).forEach((feature) => {
-      const icon = L.divIcon({ className: "live-marker-shell", html: `<div class="live-marker ${feature.kind}">${feature.kind.charAt(0).toUpperCase()}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
-      const marker = L.marker([feature.latitude, feature.longitude], { icon, title: feature.name });
-      marker.bindPopup(`<strong>${feature.name}</strong><br>${feature.detail}<br>${feature.distanceKm} km from site<br><a href="${feature.osmUrl}" target="_blank" rel="noreferrer">Open OSM record</a>`);
-      marker.addTo(layer);
+      const popup = `<strong>${feature.name}</strong><br>${feature.detail}<br>${feature.distanceKm} km from selected location<br><a href="${feature.osmUrl}" target="_blank" rel="noreferrer">Open OSM record</a>`;
+      if (feature.geometry && feature.geometry.length >= 2) {
+        const isArea = feature.geometry.length >= 4 && feature.geometry[0][0] === feature.geometry.at(-1)?.[0] && feature.geometry[0][1] === feature.geometry.at(-1)?.[1];
+        const color = feature.kind === "power" ? "#e69b2d" : feature.kind === "rail" ? "#334b48" : feature.kind === "water" ? "#2e83b6" : feature.kind === "material" ? "#9a6f34" : "#7d6253";
+        const path = isArea
+          ? L.polygon(feature.geometry, { color, weight: 2, fillColor: color, fillOpacity: 0.16 })
+          : L.polyline(feature.geometry, { color, weight: feature.kind === "power" ? 3.5 : 2.5, opacity: 0.88, dashArray: feature.kind === "rail" ? "8 5" : undefined });
+        path.bindTooltip(`${feature.kind === "power" ? "⚡ " : ""}${feature.name} · ${feature.detail}`, { sticky: true });
+        path.bindPopup(popup);
+        path.addTo(layer);
+      } else {
+        const symbol = feature.kind === "power" ? "⚡" : feature.kind === "rail" ? "R" : feature.kind === "water" ? "W" : feature.kind === "material" ? "M" : "I";
+        const icon = L.divIcon({ className: "live-marker-shell", html: `<div class="live-marker ${feature.kind}">${symbol}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
+        const marker = L.marker([feature.latitude, feature.longitude], { icon, title: `${feature.name} · ${feature.detail}` });
+        marker.bindTooltip(`<strong>${feature.name}</strong><br>${feature.detail}`, { direction: "top" });
+        marker.bindPopup(popup);
+        marker.addTo(layer);
+      }
     });
   }, [liveFeatures, liveLayers, mapStatus]);
 
   useEffect(() => {
-    if (!selected || !mapRef.current || mapStatus !== "ready") return;
+    if (!selected || selectedCell || !mapRef.current || mapStatus !== "ready") return;
     mapRef.current.flyTo([selected.latitude, selected.longitude], 10, { duration: 0.8 });
-  }, [mapStatus, selected]);
+  }, [mapStatus, selected, selectedCell]);
 
-  const discoverLive = useCallback(async (site: CatalogSite) => {
+  const discoverLive = useCallback(async (target: { latitude: number; longitude: number }) => {
     setLiveLoading(true);
     setLiveError("");
     try {
-      const params = new URLSearchParams({ lat: String(site.latitude), lng: String(site.longitude), radius: "20000" });
+      const params = new URLSearchParams({ lat: String(target.latitude), lng: String(target.longitude), radius: "30000" });
       const response = await fetch(`/api/geo/discover?${params}`);
       const data = (await response.json()) as { features?: LiveFeature[]; meta?: LiveMeta; error?: string };
       if (!response.ok) throw new Error(data.error ?? "Live discovery unavailable");
@@ -218,10 +441,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!selected) return;
-    const timer = window.setTimeout(() => discoverLive(selected), 300);
+    const target = analysisTarget ?? selected;
+    if (!target) return;
+    const timer = window.setTimeout(() => discoverLive(target), 300);
     return () => window.clearTimeout(timer);
-  }, [discoverLive, selected]);
+  }, [analysisTarget, discoverLive, selected]);
 
   async function runPlanner() {
     setPlannerLoading(true);
@@ -233,7 +457,11 @@ export default function Home() {
       setRecommendations(next);
       setModelMeta(data.meta);
       const top = data.recommendations[0]?.site;
-      if (top) setSelectedId(top.id);
+      if (top) {
+        setSelectedId(top.id);
+        setSelectedCell(null);
+        setAnalysisTarget(null);
+      }
       setPlannerOpen(false);
     } finally {
       setPlannerLoading(false);
@@ -248,12 +476,38 @@ export default function Home() {
     setModelMeta(null);
   }
 
+  function selectSite(id: string) {
+    setSelectedId(id);
+    setSelectedCell(null);
+    setAnalysisTarget(null);
+  }
+
+  function selectMapMode(mode: MapMode) {
+    setMapMode(mode);
+    if (mode === "electricity") {
+      setLiveLayers((state) => ({ ...state, power: true }));
+      return;
+    }
+    if (mode !== "ndvi" && mode !== "ndwi" && mode !== "ndbi") setAdviceProject(mode);
+  }
+
   function toggleCompare(id: string) {
     setCompared((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current.slice(-2), id]);
   }
 
   function downloadBrief(site: CatalogSite) {
     const liveSummary = liveFeatures.slice(0, 12).map((feature) => `- ${feature.kind}: ${feature.name} (${feature.distanceKm} km)`).join("\n");
+    const locationSection = selectedCell && locationAdvice ? [
+      "SELECTED LAND-CELL ANALYSIS",
+      `Cell: ${selectedCell.cell_id} at ${selectedCell.latitude}, ${selectedCell.longitude}`,
+      `Project: ${adviceLabels[adviceProject]}`,
+      `Combined screening score: ${locationAdvice.score}/100 (${locationAdvice.level})`,
+      `Satellite signal: ${locationAdvice.satelliteScore}/100`,
+      `Mapped infrastructure: ${locationAdvice.infrastructureScore}/100`,
+      `NDVI ${selectedCell.ndvi}; NDWI ${selectedCell.ndwi}; NDBI ${selectedCell.ndbi}; NDMI ${selectedCell.ndmi}`,
+      ...locationAdvice.reasons.map((reason) => `- ${reason}`),
+      "",
+    ] : [];
     const content = [
       "ALPHA TURKISTAN · INVESTMENT SCREENING BRIEF",
       `Generated: ${new Date().toISOString()}`,
@@ -268,6 +522,7 @@ export default function Home() {
       "",
       site.description,
       "",
+      ...locationSection,
       "DOCUMENTED INFRASTRUCTURE",
       ...site.infrastructure.map((item) => `- ${item.label}: ${item.value}${item.confirmed ? " [published]" : " [confirm]"}`),
       "",
@@ -295,6 +550,8 @@ export default function Home() {
   }
 
   const liveCounts = Object.fromEntries(liveKinds.map((kind) => [kind, liveFeatures.filter((feature) => feature.kind === kind).length])) as Record<LiveFeature["kind"], number>;
+  const currentDiscoveryTarget = analysisTarget ?? selected;
+  const activeModeLabel = mapModes.find((item) => item.id === mapMode)?.label ?? mapMode;
 
   return (
     <main className="app-shell">
@@ -304,7 +561,7 @@ export default function Home() {
         <div className="header-stats">
           <div><strong>{meta?.total ?? "—"}</strong><span>source records</span></div>
           <div><strong>{meta?.officialRecords ?? "—"}</strong><span>official</span></div>
-          <div><strong>{liveFeatures.length}</strong><span>nearby features</span></div>
+          <div><strong>{agroData?.features.length ?? "—"}</strong><span>satellite cells</span></div>
         </div>
         <div className="system-status"><span className={`status-light ${meta?.storage === "d1" ? "online" : "warming"}`} /><div><strong>System online</strong><small>{meta?.storage === "d1" ? "D1 + live GIS" : "Curated cache + live GIS"}</small></div></div>
       </header>
@@ -314,6 +571,11 @@ export default function Home() {
           <div className="panel-heading"><div><span className="eyebrow">Investor site finder</span><h1>Find where your project can work.</h1></div><span className="live-pill">LIVE</span></div>
 
           <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try cotton, 50 MW, rail…" aria-label="Search sites, materials and business types" />{query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search">×</button>}</label>
+
+          <section className="evidence-layer-card">
+            <div><span className="eyebrow">MAP EVIDENCE LAYER</span><strong>{mapModes.find((item) => item.id === mapMode)?.label}</strong><small>{mapMode === "electricity" ? "Mapped lines, substations and voltage evidence around the selected location" : "402 regional cells derived from the Alpha Turkistan 2025 Sentinel-2 mosaic"}</small></div>
+            <label><span>Layer</span><select value={mapMode} onChange={(event) => selectMapMode(event.target.value as MapMode)} aria-label="Map evidence layer">{mapModes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          </section>
 
           <div className="filter-section">
             <div className="section-title"><span>BUSINESS TYPE</span><button type="button" onClick={resetSearch}>Reset</button></div>
@@ -340,7 +602,7 @@ export default function Home() {
 
           <div className="results-heading"><span><strong>{rankedSites.length}</strong> matching locations</span><span>{loading ? "Searching…" : recommendations && Object.keys(recommendations).length ? "Project fit ↓" : "Evidence ranked ↓"}</span></div>
           <div className="site-list">
-            {rankedSites.map((site) => <SiteCard key={site.id} site={site} selected={site.id === selectedId} recommendation={recommendations[site.id]} onClick={() => setSelectedId(site.id)} />)}
+            {rankedSites.map((site) => <SiteCard key={site.id} site={site} selected={!selectedCell && site.id === selectedId} recommendation={recommendations[site.id]} onClick={() => selectSite(site.id)} />)}
             {!loading && rankedSites.length === 0 && <div className="empty-state"><strong>No matching records</strong><span>Try a broader material, district or business type.</span><button type="button" onClick={resetSearch}>Clear filters</button></div>}
           </div>
         </aside>
@@ -349,23 +611,53 @@ export default function Home() {
           <div ref={mapContainer} className="map-container" />
           {mapStatus !== "ready" && <div className="map-loading"><div className="map-grid" /><strong>{mapStatus === "error" ? "Map could not initialize" : "Loading geographic map…"}</strong><span>Site records remain available in the side panel.</span></div>}
 
-          <div className="map-toolbar">
-            <span>LIVE LAYERS</span>
-            {liveKinds.map((kind) => <button type="button" key={kind} className={`${kind} ${liveLayers[kind] ? "active" : ""}`} onClick={() => setLiveLayers((state) => ({ ...state, [kind]: !state[kind] }))} aria-pressed={liveLayers[kind]}><i />{kind}<b>{liveCounts[kind]}</b></button>)}
+          <div className="map-toolbar intelligence-toolbar">
+            <span>LAND & INFRASTRUCTURE</span>
+            <div className="mode-buttons">
+              {mapModes.map((mode) => <button type="button" key={mode.id} className={mapMode === mode.id ? "active" : ""} onClick={() => selectMapMode(mode.id)} aria-pressed={mapMode === mode.id}>{mode.short}</button>)}
+            </div>
+            <div className="network-buttons">
+              {(["power", "rail", "water"] as LiveFeature["kind"][]).map((kind) => <button type="button" key={kind} className={`${kind} ${liveLayers[kind] ? "active" : ""}`} onClick={() => setLiveLayers((state) => ({ ...state, [kind]: !state[kind] }))} aria-pressed={liveLayers[kind]}><i />{kind === "power" ? "Electricity" : kind}<b>{liveCounts[kind]}</b></button>)}
+            </div>
           </div>
 
           <div className="map-data-card">
             <span className={`status-light ${liveLoading ? "warming" : liveError ? "error" : "online"}`} />
-            <div><strong>{liveLoading ? "Discovering nearby infrastructure…" : liveError ? "Live discovery temporarily unavailable" : `${liveFeatures.length} nearby public-map features`}</strong><span>{liveMeta?.source ?? "OpenStreetMap via Overpass API"} · screening data</span></div>
-            {selected && <button type="button" onClick={() => discoverLive(selected)} disabled={liveLoading}>↻</button>}
+            <div><strong>{liveLoading ? "Tracing electricity, rail and water…" : liveError ? "Live infrastructure temporarily unavailable" : `${activeModeLabel} · ${liveFeatures.length} mapped infrastructure records`}</strong><span>{mapMode === "electricity" ? "Power lines are drawn as orange corridors; click a line for voltage evidence" : "Alpha Turkistan Sentinel-2 2025 · click any cell for AI advice"}</span></div>
+            {currentDiscoveryTarget && <button type="button" onClick={() => discoverLive(currentDiscoveryTarget)} disabled={liveLoading} aria-label="Refresh infrastructure">↻</button>}
           </div>
 
-          <div className="map-legend"><span><i className="official" />Official record</span><span><i className="registry" />Needs confirmation</span><span><i className="live" />Live discovery</span></div>
+          {mapMode === "electricity"
+            ? <div className="map-legend network-legend"><span><i className="power-line" />Electricity line</span><span><i className="substation" />Substation / source</span><span><i className="rail-line" />Rail</span><span><i className="official" />Investment site</span></div>
+            : <div className="map-legend suitability-legend"><span><i className="low" />Low</span><span><i className="medium" />Conditional</span><span><i className="high" />Strong</span><span>Relative regional screening · not soil certification</span></div>}
         </section>
 
         <aside className="insight-panel">
           {selected ? <>
             <div className="insight-scroll">
+              {selectedCell && locationAdvice && <>
+                <section className="location-analysis">
+                  <div className="analysis-kicker"><span>SELECTED LAND CELL · {selectedCell.cell_id}</span><span>Sentinel-2 · {selectedCell.period.replace("_", " ")}</span></div>
+                  <div className="analysis-title-row"><div><span className="eyebrow">AI LOCATION ADVICE / АНАЛИЗ МЕСТА</span><h2>What can work here?</h2><p>{selectedCell.latitude.toFixed(4)}, {selectedCell.longitude.toFixed(4)} · {selectedCell.area_km2} km² screening cell</p></div><ScoreRing score={locationAdvice.score} /></div>
+                  <label className="project-choice"><span>Project to assess</span><select value={adviceProject} onChange={(event) => setAdviceProject(event.target.value as AdviceProject)} aria-label="Project to assess">{(Object.keys(adviceLabels) as AdviceProject[]).map((key) => <option key={key} value={key}>{adviceLabels[key]}</option>)}</select></label>
+
+                  <div className={`ai-verdict ${locationAdvice.score >= 75 ? "strong" : locationAdvice.score >= 55 ? "conditional" : "low"}`}><span>✦</span><div><strong>{locationAdvice.level}</strong><p>{locationAdvice.narrative}</p><small>Explainable screening model · satellite 2025 + mapped infrastructure</small></div></div>
+
+                  <div className="spectral-grid">
+                    <div><span>NDVI</span><strong>{selectedCell.ndvi.toFixed(3)}</strong><small>vegetation</small></div>
+                    <div><span>NDWI</span><strong>{selectedCell.ndwi.toFixed(3)}</strong><small>water signal</small></div>
+                    <div><span>NDBI</span><strong>{selectedCell.ndbi.toFixed(3)}</strong><small>built / dry</small></div>
+                    <div><span>NDMI</span><strong>{selectedCell.ndmi.toFixed(3)}</strong><small>moisture</small></div>
+                    <div><span>Active cover</span><strong>{selectedCell.active_vegetation_pct}%</strong><small>sample pixels</small></div>
+                    <div><span>Confidence</span><strong>{selectedCell.confidence}%</strong><small>data coverage</small></div>
+                  </div>
+
+                  <div className="advice-scores"><div><span>Satellite land signal</span><strong>{locationAdvice.satelliteScore}</strong><i><b style={{ width: `${locationAdvice.satelliteScore}%` }} /></i></div><div><span>Mapped infrastructure</span><strong>{locationAdvice.infrastructureScore}</strong><i><b style={{ width: `${locationAdvice.infrastructureScore}%` }} /></i></div></div>
+                  <div className="reason-list">{locationAdvice.reasons.map((reason) => <span key={reason}><i>✓</i>{reason}</span>)}</div>
+                  <p className="analysis-warning"><strong>Required before investment:</strong> cadastral ownership, zoning, soil salinity/chemistry, drainage, irrigation rights and an operator-issued grid connection study.</p>
+                </section>
+                <div className="section-separator"><span>Nearest curated investment record</span></div>
+              </>}
               <div className="insight-topline"><span className={`evidence-pill ${selected.evidenceLevel}`}><i />{evidenceLabel(selected)}</span><span className="source-date">Checked {sourceDate(selected.sourceCheckedAt)}</span></div>
               <div className="site-title-row"><div><span className="eyebrow">{selected.district}</span><h2>{selected.name}</h2><p>{selected.sector} · {selected.areaHa > 0 ? `${selected.areaHa} hectares` : "area to confirm"} · {selected.locationAccuracy} point</p></div><ScoreRing score={selectedScore} /></div>
 
@@ -391,7 +683,7 @@ export default function Home() {
               </section>
 
               <section className="detail-section">
-                <div className="detail-heading"><h3>Live map discovery</h3><span>{liveFeatures.length} features / 20 km</span></div>
+                <div className="detail-heading"><h3>Live map discovery</h3><span>{liveFeatures.length} features / 30 km</span></div>
                 <div className="live-summary-grid">{liveKinds.map((kind) => <div key={kind}><i className={kind}>{kind.charAt(0).toUpperCase()}</i><span>{kind}</span><strong>{liveCounts[kind]}</strong></div>)}</div>
                 <p className="data-disclaimer">{liveMeta?.disclaimer ?? "Nearby public-map features indicate context only; they do not confirm capacity, serviceability or ownership."}</p>
               </section>

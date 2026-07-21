@@ -4,6 +4,7 @@ type OverpassElement = {
   lat?: number;
   lon?: number;
   center?: { lat: number; lon: number };
+  geometry?: Array<{ lat: number; lon: number }>;
   tags?: Record<string, string>;
 };
 
@@ -24,6 +25,14 @@ function classify(tags: Record<string, string>) {
   return "industry";
 }
 
+function detailFor(tags: Record<string, string>) {
+  if (tags.voltage) {
+    const voltage = Math.max(...tags.voltage.split(";").map(Number).filter(Number.isFinite));
+    if (Number.isFinite(voltage)) return voltage >= 1000 ? `${voltage / 1000} kV` : `${voltage} V`;
+  }
+  return tags.substance ?? tags.product ?? tags.industrial ?? tags.railway ?? tags.waterway ?? tags.power ?? tags.landuse ?? "Mapped public feature";
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const lat = Number(url.searchParams.get("lat"));
@@ -35,13 +44,16 @@ export async function GET(request: Request) {
   }
 
   const query = `[out:json][timeout:24];(
+    way(around:${Math.round(radius)},${lat},${lng})["power"~"line|minor_line|cable"];
     nwr(around:${Math.round(radius)},${lat},${lng})["power"~"substation|plant|generator"];
-    nwr(around:${Math.round(radius)},${lat},${lng})["railway"~"station|halt|yard|rail"];
+    way(around:${Math.round(radius)},${lat},${lng})["railway"="rail"];
+    nwr(around:${Math.round(radius)},${lat},${lng})["railway"~"station|halt|yard"];
     nwr(around:${Math.round(radius)},${lat},${lng})["landuse"="industrial"];
     nwr(around:${Math.round(radius)},${lat},${lng})["landuse"="quarry"];
     nwr(around:${Math.round(radius)},${lat},${lng})["man_made"="works"];
     nwr(around:${Math.round(radius)},${lat},${lng})["natural"="water"];
-  );out center 120;`;
+    way(around:${Math.round(radius)},${lat},${lng})["waterway"~"river|canal"];
+  );out tags center geom 180;`;
 
   try {
     const response = await fetch("https://overpass-api.de/api/interpreter", {
@@ -68,7 +80,9 @@ export async function GET(request: Request) {
           latitude: point.lat,
           longitude: point.lon,
           distanceKm: Number(distanceKm(lat, lng, point.lat, point.lon).toFixed(1)),
-          detail: tags.voltage ? `${tags.voltage} V` : tags.substance ?? tags.product ?? tags.industrial ?? tags.railway ?? tags.power ?? tags.landuse ?? "Mapped public feature",
+          detail: detailFor(tags),
+          geometry: element.geometry?.map((item) => [item.lat, item.lon] as [number, number]),
+          infrastructureType: tags.power ?? tags.railway ?? tags.waterway ?? tags.landuse ?? tags.man_made ?? tags.natural ?? kind,
           osmUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
         };
       })

@@ -27,9 +27,11 @@ test("server-renders the operational investor workspace", async () => {
   assert.match(html, /Find where your project can work\./);
   assert.match(html, /Match my project/);
   assert.match(html, /Interactive investment map/);
-  assert.match(html, /OpenStreetMap via Overpass API/);
+  assert.match(html, /Power grid \/ Электросеть/);
+  assert.match(html, /NDVI vegetation/);
+  assert.match(html, /NDBI built \/ dry/);
   assert.match(html, /Official sources only/);
-  assert.match(html, /Live discovery/);
+  assert.match(html, /Electricity line/);
   assert.doesNotMatch(html, /codex-preview|demonstration dataset|react-loading-skeleton/i);
 });
 
@@ -60,25 +62,38 @@ test("project model ranks sites and explains the result", async () => {
   assert.ok(data.recommendations[0].reasons.length > 0);
 });
 
-test("source includes persistent storage, Leaflet map and bounded live discovery", async () => {
-  const [page, schema, discovery, hosting, packageJson, migration] = await Promise.all([
+test("source includes persistent storage, satellite screening, Leaflet and bounded infrastructure discovery", async () => {
+  const [page, schema, discovery, hosting, packageJson, migration, agroRaw] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/geo/discover/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0000_modern_whirlwind.sql", import.meta.url), "utf8"),
+    readFile(new URL("../public/data/agro-suitability.geojson", import.meta.url), "utf8"),
   ]);
   assert.match(page, /import\("leaflet"\)/);
   assert.match(page, /tile\.openstreetmap\.org/);
   assert.match(page, /\/api\/geo\/discover/);
   assert.match(page, /Open public cadastral map/);
   assert.match(page, /Download investor brief/);
+  assert.match(page, /AI LOCATION ADVICE/);
+  assert.match(page, /Alpha Turkistan 2025 Sentinel-2 mosaic/);
   assert.match(schema, /investment_sites/);
   assert.match(discovery, /overpass-api\.de/);
   assert.match(discovery, /Math\.min\(30000/);
+  assert.match(discovery, /line\|minor_line\|cable/);
+  assert.match(discovery, /out tags center geom/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(packageJson, /"leaflet"/);
   assert.doesNotMatch(packageJson, /maplibre-gl|react-loading-skeleton/);
   assert.match(migration, /CREATE TABLE `investment_sites`/);
+  const agro = JSON.parse(agroRaw);
+  assert.equal(agro.type, "FeatureCollection");
+  assert.ok(agro.features.length >= 350);
+  assert.match(agro.metadata.source, /Alpha Turkistan Sentinel-2 L2A 2025/);
+  assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.ndvi)));
+  assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.ndwi)));
+  assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.ndbi)));
+  assert.ok(agro.features.every((feature) => feature.properties.rice >= 0 && feature.properties.rice <= 100));
 });
