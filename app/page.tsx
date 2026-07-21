@@ -1,591 +1,416 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import maplibregl, { type Map as MapLibreMap, type Marker } from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LayerGroup, Map as LeafletMap } from "leaflet";
+import type { CatalogSite, ProjectNeed, Sector } from "../lib/catalog";
+import "leaflet/dist/leaflet.css";
 
-type Sector = "All" | "Agro" | "Manufacturing" | "Logistics" | "Energy";
-type Availability = "Available" | "Under option" | "Occupied";
+type SitesMeta = {
+  storage: "d1" | "seed";
+  total: number;
+  returned: number;
+  officialRecords: number;
+  generatedAt: string;
+  warning: string | null;
+};
 
-type Site = {
+type LiveFeature = {
   id: string;
+  kind: "power" | "rail" | "industry" | "material" | "water";
   name: string;
-  district: string;
-  coordinates: [number, number];
-  sector: Exclude<Sector, "All">;
-  availability: Availability;
-  ownership: string;
-  area: number;
-  score: number;
-  power: string;
-  water: string;
-  road: string;
-  rail: string;
-  materials: string[];
-  updated: string;
-  summary: string;
-  fit: { label: string; value: number }[];
-  risks: string[];
+  latitude: number;
+  longitude: number;
+  distanceKm: number;
+  detail: string;
+  osmUrl: string;
 };
 
-const sites: Site[] = [
-  {
-    id: "turan-greenfield",
-    name: "TURAN Greenfield",
-    district: "Turkistan city",
-    coordinates: [68.2749, 43.2973],
-    sector: "Manufacturing",
-    availability: "Available",
-    ownership: "State land · lease-ready",
-    area: 180,
-    score: 94,
-    power: "25 MW / 1.2 km",
-    water: "2,800 m³/day",
-    road: "A2 highway / 3.4 km",
-    rail: "Freight terminal / 8 km",
-    materials: ["Limestone", "Gypsum", "Cotton"],
-    updated: "18 Jul 2026",
-    summary:
-      "Best regional fit for a mid-scale building materials or textile plant, with strong utilities, SEZ incentives and a clear land route.",
-    fit: [
-      { label: "Infrastructure", value: 96 },
-      { label: "Market access", value: 91 },
-      { label: "Raw materials", value: 88 },
-      { label: "Land readiness", value: 97 },
-    ],
-    risks: ["Final grid connection study required", "Confirm water tariff for industrial load"],
-  },
-  {
-    id: "sairam-agro",
-    name: "Sairam Agro Hub",
-    district: "Sairam district",
-    coordinates: [69.766, 42.342],
-    sector: "Agro",
-    availability: "Available",
-    ownership: "Municipal reserve · unallocated",
-    area: 68,
-    score: 91,
-    power: "14 MW / 0.8 km",
-    water: "4,200 m³/day",
-    road: "A2 highway / 1.1 km",
-    rail: "Badam station / 12 km",
-    materials: ["Fruit", "Vegetables", "Dairy"],
-    updated: "16 Jul 2026",
-    summary:
-      "A high-confidence location for food processing and cold-chain operations close to growers, workforce and the Shymkent consumer market.",
-    fit: [
-      { label: "Infrastructure", value: 90 },
-      { label: "Market access", value: 96 },
-      { label: "Raw materials", value: 98 },
-      { label: "Land readiness", value: 82 },
-    ],
-    risks: ["Seasonal truck congestion", "Cold-storage capacity must be added"],
-  },
-  {
-    id: "kentau-brownfield",
-    name: "Kentau Brownfield",
-    district: "Kentau city",
-    coordinates: [68.5096, 43.5164],
-    sector: "Manufacturing",
-    availability: "Under option",
-    ownership: "State asset · option pending",
-    area: 35,
-    score: 86,
-    power: "32 MW / on site",
-    water: "1,600 m³/day",
-    road: "R-31 / 0.4 km",
-    rail: "Industrial siding / on site",
-    materials: ["Polymetal ore", "Coal", "Limestone"],
-    updated: "14 Jul 2026",
-    summary:
-      "Existing heavy infrastructure makes this a fast brownfield candidate for mineral processing or component manufacturing.",
-    fit: [
-      { label: "Infrastructure", value: 93 },
-      { label: "Market access", value: 76 },
-      { label: "Raw materials", value: 95 },
-      { label: "Land readiness", value: 79 },
-    ],
-    risks: ["Environmental baseline audit needed", "Ownership option expires in Q4"],
-  },
-  {
-    id: "arys-logistics",
-    name: "Arys Logistics Gate",
-    district: "Arys city",
-    coordinates: [68.8048, 42.4252],
-    sector: "Logistics",
-    availability: "Available",
-    ownership: "Industrial zone · 22 ha free",
-    area: 52,
-    score: 89,
-    power: "18 MW / 2.1 km",
-    water: "1,100 m³/day",
-    road: "A15 / 2.8 km",
-    rail: "Arys rail junction / 1.6 km",
-    materials: ["Cotton", "Grain", "Construction goods"],
-    updated: "17 Jul 2026",
-    summary:
-      "The strongest multimodal location in the shortlist for a regional distribution center, bonded warehouse or assembly operation.",
-    fit: [
-      { label: "Infrastructure", value: 87 },
-      { label: "Market access", value: 97 },
-      { label: "Raw materials", value: 81 },
-      { label: "Land readiness", value: 91 },
-    ],
-    risks: ["Confirm customs-facility scope", "Dust mitigation required"],
-  },
-  {
-    id: "shardara-energy",
-    name: "Shardara Agro-Energy",
-    district: "Shardara district",
-    coordinates: [67.9696, 41.2545],
-    sector: "Energy",
-    availability: "Available",
-    ownership: "Public land · auction eligible",
-    area: 120,
-    score: 82,
-    power: "Hydro node / 6 km",
-    water: "Irrigation canal / 0.9 km",
-    road: "Regional road / 2.2 km",
-    rail: "Zhetisay terminal / 96 km",
-    materials: ["Solar resource", "Crop residue", "Fish"],
-    updated: "12 Jul 2026",
-    summary:
-      "Promising for solar, biomass or energy-intensive greenhouse activity where water and generation access outweigh rail distance.",
-    fit: [
-      { label: "Infrastructure", value: 83 },
-      { label: "Market access", value: 67 },
-      { label: "Raw materials", value: 92 },
-      { label: "Land readiness", value: 88 },
-    ],
-    risks: ["Grid export capacity must be confirmed", "Long distance to rail freight"],
-  },
-  {
-    id: "maktaaral-cotton",
-    name: "Maktaaral Cotton Cluster",
-    district: "Zhetisay district",
-    coordinates: [68.3288, 40.7739],
-    sector: "Agro",
-    availability: "Occupied",
-    ownership: "Private operator · no free parcel",
-    area: 44,
-    score: 78,
-    power: "10 MW / 1.9 km",
-    water: "Canal network / on site",
-    road: "A15 / 5.2 km",
-    rail: "Zhetisay terminal / 7 km",
-    materials: ["Cotton", "Melons", "Vegetables"],
-    updated: "10 Jul 2026",
-    summary:
-      "Excellent feedstock density for cotton and food processing, but investors should seek a joint venture because the mapped parcel is occupied.",
-    fit: [
-      { label: "Infrastructure", value: 79 },
-      { label: "Market access", value: 75 },
-      { label: "Raw materials", value: 99 },
-      { label: "Land readiness", value: 41 },
-    ],
-    risks: ["Parcel currently occupied", "Cross-border logistics can vary seasonally"],
-  },
-];
-
-const sectorOptions: Sector[] = ["All", "Agro", "Manufacturing", "Logistics", "Energy"];
-
-const infrastructureGeoJson = {
-  type: "FeatureCollection" as const,
-  features: [
-    {
-      type: "Feature" as const,
-      properties: { kind: "electricity" },
-      geometry: {
-        type: "LineString" as const,
-        coordinates: [
-          [67.94, 41.22],
-          [68.43, 42.03],
-          [68.81, 42.43],
-          [68.5, 43.52],
-          [68.27, 43.3],
-          [69.77, 42.34],
-        ],
-      },
-    },
-    {
-      type: "Feature" as const,
-      properties: { kind: "rail" },
-      geometry: {
-        type: "LineString" as const,
-        coordinates: [
-          [68.33, 40.77],
-          [68.81, 42.43],
-          [68.27, 43.3],
-          [68.51, 43.52],
-        ],
-      },
-    },
-  ],
+type LiveMeta = {
+  source?: string;
+  observedAt?: string;
+  disclaimer?: string;
+  unavailable?: boolean;
 };
 
-const materialsGeoJson = {
-  type: "FeatureCollection" as const,
-  features: [
-    { type: "Feature" as const, properties: { material: "Cotton" }, geometry: { type: "Point" as const, coordinates: [68.28, 40.86] } },
-    { type: "Feature" as const, properties: { material: "Limestone" }, geometry: { type: "Point" as const, coordinates: [68.62, 43.42] } },
-    { type: "Feature" as const, properties: { material: "Fruit" }, geometry: { type: "Point" as const, coordinates: [69.48, 42.47] } },
-    { type: "Feature" as const, properties: { material: "Solar" }, geometry: { type: "Point" as const, coordinates: [67.96, 41.42] } },
-  ],
-};
+type Recommendation = { score: number; reasons: string[] };
 
-function statusClass(status: Availability) {
-  return status === "Available" ? "available" : status === "Occupied" ? "occupied" : "option";
+const sectors: Array<"All" | Sector> = ["All", "Agro", "Manufacturing", "Logistics", "Energy", "Tourism"];
+const sectorLabels: Record<string, string> = { All: "All", Agro: "Agro", Manufacturing: "Factory", Logistics: "Logistics", Energy: "Energy", Tourism: "Tourism" };
+const liveKinds: LiveFeature["kind"][] = ["power", "rail", "industry", "material", "water"];
+
+function evidenceLabel(site: CatalogSite) {
+  if (site.evidenceLevel === "official") return "Official source";
+  if (site.evidenceLevel === "registry") return "Registry evidence";
+  return "Public-map discovery";
 }
 
-function SuitabilityRing({ score }: { score: number }) {
+function sourceDate(value: string) {
+  return new Intl.DateTimeFormat("en", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00Z`));
+}
+
+function ScoreRing({ score }: { score: number }) {
   return (
     <div className="score-ring" style={{ "--score": `${score * 3.6}deg` } as React.CSSProperties}>
-      <div>
-        <strong>{score}</strong>
-        <span>AI fit</span>
-      </div>
+      <div><strong>{score}</strong><span>FIT</span></div>
     </div>
+  );
+}
+
+function SiteCard({ site, selected, recommendation, onClick }: { site: CatalogSite; selected: boolean; recommendation?: Recommendation; onClick: () => void }) {
+  const score = recommendation?.score ?? site.baseScore;
+  return (
+    <button type="button" className={`site-card ${selected ? "selected" : ""}`} onClick={onClick}>
+      <span className={`evidence-dot ${site.evidenceLevel}`} />
+      <span className="site-card-copy">
+        <strong>{site.name}</strong>
+        <span>{site.district} · {site.areaHa > 0 ? `${site.areaHa} ha` : "area to confirm"}</span>
+        <small>{site.sector} · {evidenceLabel(site)}</small>
+        {recommendation?.reasons[0] && <em>{recommendation.reasons[0]}</em>}
+      </span>
+      <span className="mini-score">{score}<small>FIT</small></span>
+    </button>
   );
 }
 
 export default function Home() {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MapLibreMap | null>(null);
-  const markerRefs = useRef<Marker[]>([]);
-  const [selectedId, setSelectedId] = useState(sites[0].id);
-  const [sector, setSector] = useState<Sector>("All");
-  const [freeOnly, setFreeOnly] = useState(false);
+  const mapRef = useRef<LeafletMap | null>(null);
+  const leafletRef = useRef<typeof import("leaflet") | null>(null);
+  const siteLayerRef = useRef<LayerGroup | null>(null);
+  const liveLayerRef = useRef<LayerGroup | null>(null);
+  const [sites, setSites] = useState<CatalogSite[]>([]);
+  const [meta, setMeta] = useState<SitesMeta | null>(null);
+  const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
-  const [mapReady, setMapReady] = useState(false);
-  const [layers, setLayers] = useState({ power: true, rail: true, materials: true });
+  const [sector, setSector] = useState<"All" | Sector>("All");
+  const [officialOnly, setOfficialOnly] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [mapStatus, setMapStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [liveFeatures, setLiveFeatures] = useState<LiveFeature[]>([]);
+  const [liveMeta, setLiveMeta] = useState<LiveMeta | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState("");
+  const [liveLayers, setLiveLayers] = useState<Record<LiveFeature["kind"], boolean>>({ power: true, rail: true, industry: true, material: true, water: false });
+  const [planner, setPlanner] = useState<ProjectNeed>({ sector: "Manufacturing", landHa: 20, powerMw: 5, needsRail: false, material: "" });
+  const [plannerOpen, setPlannerOpen] = useState(false);
+  const [plannerLoading, setPlannerLoading] = useState(false);
+  const [recommendations, setRecommendations] = useState<Record<string, Recommendation>>({});
+  const [modelMeta, setModelMeta] = useState<{ model: string; method: string } | null>(null);
   const [compared, setCompared] = useState<string[]>([]);
 
-  const visibleSites = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return sites.filter((site) => {
-      const sectorMatch = sector === "All" || site.sector === sector;
-      const availabilityMatch = !freeOnly || site.availability === "Available";
-      const queryMatch = !normalized || `${site.name} ${site.district} ${site.materials.join(" ")}`.toLowerCase().includes(normalized);
-      return sectorMatch && availabilityMatch && queryMatch;
-    });
-  }, [freeOnly, query, sector]);
-
   const selected = sites.find((site) => site.id === selectedId) ?? sites[0];
+  const selectedRecommendation = selected ? recommendations[selected.id] : undefined;
+  const selectedScore = selectedRecommendation?.score ?? selected?.baseScore ?? 0;
+
+  const rankedSites = useMemo(() => {
+    if (!Object.keys(recommendations).length) return sites;
+    return [...sites].sort((a, b) => (recommendations[b.id]?.score ?? b.baseScore) - (recommendations[a.id]?.score ?? a.baseScore));
+  }, [recommendations, sites]);
 
   useEffect(() => {
-    if (!mapContainer.current || mapRef.current) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      const params = new URLSearchParams({ query, sector, official: String(officialOnly) });
+      try {
+        const response = await fetch(`/api/sites?${params}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(`Search returned ${response.status}`);
+        const data = (await response.json()) as { sites: CatalogSite[]; meta: SitesMeta };
+        setSites(data.sites);
+        setMeta(data.meta);
+        setSelectedId((current) => data.sites.some((site) => site.id === current) ? current : data.sites[0]?.id ?? "");
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      } finally {
+        setLoading(false);
+      }
+    }, 220);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [officialOnly, query, sector]);
 
-    const map = new maplibregl.Map({
-      container: mapContainer.current,
-      center: [68.7, 42.25],
-      zoom: 6.45,
-      minZoom: 5.7,
-      maxZoom: 13,
-      attributionControl: false,
-      style: {
-        version: 8,
-        sources: {
-          osm: {
-            type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256,
-            attribution: "© OpenStreetMap contributors",
-          },
-        },
-        layers: [{ id: "osm", type: "raster", source: "osm", paint: { "raster-saturation": -0.65, "raster-contrast": 0.05, "raster-brightness-max": 0.94 } }],
-      },
-    });
-
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
-
-    map.on("load", () => {
-      map.addSource("infrastructure", { type: "geojson", data: infrastructureGeoJson });
-      map.addLayer({
-        id: "power-lines",
-        type: "line",
-        source: "infrastructure",
-        filter: ["==", ["get", "kind"], "electricity"],
-        paint: { "line-color": "#e1a52f", "line-width": 2.4, "line-opacity": 0.86, "line-dasharray": [2, 2] },
-      });
-      map.addLayer({
-        id: "rail-lines",
-        type: "line",
-        source: "infrastructure",
-        filter: ["==", ["get", "kind"], "rail"],
-        paint: { "line-color": "#233e3c", "line-width": 2.2, "line-opacity": 0.72, "line-dasharray": [1, 2] },
-      });
-      map.addSource("materials", { type: "geojson", data: materialsGeoJson });
-      map.addLayer({
-        id: "material-zones",
-        type: "circle",
-        source: "materials",
-        paint: {
-          "circle-radius": 18,
-          "circle-color": "#d6ea5b",
-          "circle-opacity": 0.28,
-          "circle-stroke-color": "#6f7d26",
-          "circle-stroke-width": 1.2,
-        },
-      });
-      map.addLayer({
-        id: "material-labels",
-        type: "symbol",
-        source: "materials",
-        layout: { "text-field": ["get", "material"], "text-size": 11, "text-offset": [0, 2.25] },
-        paint: { "text-color": "#34421f", "text-halo-color": "#f6f4ee", "text-halo-width": 1.5 },
-      });
-      setMapReady(true);
-    });
-
-    mapRef.current = map;
+  useEffect(() => {
+    let active = true;
+    async function initializeMap() {
+      if (!mapContainer.current || mapRef.current) return;
+      try {
+        const L = await import("leaflet");
+        if (!active || !mapContainer.current) return;
+        leafletRef.current = L;
+        const map = L.map(mapContainer.current, { zoomControl: false, minZoom: 5, maxZoom: 16, preferCanvas: true }).setView([42.35, 68.55], 7);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: "© OpenStreetMap contributors",
+          crossOrigin: true,
+        }).addTo(map);
+        L.control.zoom({ position: "bottomright" }).addTo(map);
+        siteLayerRef.current = L.layerGroup().addTo(map);
+        liveLayerRef.current = L.layerGroup().addTo(map);
+        mapRef.current = map;
+        window.setTimeout(() => map.invalidateSize(), 100);
+        setMapStatus("ready");
+      } catch {
+        setMapStatus("error");
+      }
+    }
+    initializeMap();
     return () => {
-      markerRefs.current.forEach((marker) => marker.remove());
-      map.remove();
+      active = false;
+      mapRef.current?.remove();
       mapRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-    markerRefs.current.forEach((marker) => marker.remove());
-    markerRefs.current = visibleSites.map((site) => {
-      const button = document.createElement("button");
-      button.className = `site-marker ${statusClass(site.availability)}${site.id === selectedId ? " selected" : ""}`;
-      button.type = "button";
-      button.title = `${site.name} — ${site.score} AI fit`;
-      button.setAttribute("aria-label", `Select ${site.name}`);
-      button.innerHTML = `<span>${site.score}</span>`;
-      button.addEventListener("click", () => setSelectedId(site.id));
-      return new maplibregl.Marker({ element: button, anchor: "center" }).setLngLat(site.coordinates).addTo(map);
+    const L = leafletRef.current;
+    const layer = siteLayerRef.current;
+    if (!L || !layer || mapStatus !== "ready") return;
+    layer.clearLayers();
+    rankedSites.forEach((site) => {
+      const score = recommendations[site.id]?.score ?? site.baseScore;
+      const icon = L.divIcon({
+        className: "investment-marker-shell",
+        html: `<div class="investment-marker ${site.evidenceLevel} ${site.id === selectedId ? "selected" : ""}"><span>${score}</span></div>`,
+        iconSize: [44, 50],
+        iconAnchor: [22, 44],
+      });
+      const marker = L.marker([site.latitude, site.longitude], { icon, title: site.name, riseOnHover: true });
+      marker.on("click", () => setSelectedId(site.id));
+      marker.bindTooltip(`<strong>${site.name}</strong><br>${evidenceLabel(site)} · ${score} fit`, { direction: "top", offset: [0, -36] });
+      marker.addTo(layer);
     });
-  }, [mapReady, selectedId, visibleSites]);
+  }, [mapStatus, rankedSites, recommendations, selectedId]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapReady) return;
-    map.setLayoutProperty("power-lines", "visibility", layers.power ? "visible" : "none");
-    map.setLayoutProperty("rail-lines", "visibility", layers.rail ? "visible" : "none");
-    map.setLayoutProperty("material-zones", "visibility", layers.materials ? "visible" : "none");
-    map.setLayoutProperty("material-labels", "visibility", layers.materials ? "visible" : "none");
-  }, [layers, mapReady]);
+    const L = leafletRef.current;
+    const layer = liveLayerRef.current;
+    if (!L || !layer || mapStatus !== "ready") return;
+    layer.clearLayers();
+    liveFeatures.filter((feature) => liveLayers[feature.kind]).forEach((feature) => {
+      const icon = L.divIcon({ className: "live-marker-shell", html: `<div class="live-marker ${feature.kind}">${feature.kind.charAt(0).toUpperCase()}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
+      const marker = L.marker([feature.latitude, feature.longitude], { icon, title: feature.name });
+      marker.bindPopup(`<strong>${feature.name}</strong><br>${feature.detail}<br>${feature.distanceKm} km from site<br><a href="${feature.osmUrl}" target="_blank" rel="noreferrer">Open OSM record</a>`);
+      marker.addTo(layer);
+    });
+  }, [liveFeatures, liveLayers, mapStatus]);
 
-  function chooseSite(site: Site) {
-    setSelectedId(site.id);
-    mapRef.current?.flyTo({ center: site.coordinates, zoom: 8.4, duration: 900 });
+  useEffect(() => {
+    if (!selected || !mapRef.current || mapStatus !== "ready") return;
+    mapRef.current.flyTo([selected.latitude, selected.longitude], 10, { duration: 0.8 });
+  }, [mapStatus, selected]);
+
+  const discoverLive = useCallback(async (site: CatalogSite) => {
+    setLiveLoading(true);
+    setLiveError("");
+    try {
+      const params = new URLSearchParams({ lat: String(site.latitude), lng: String(site.longitude), radius: "20000" });
+      const response = await fetch(`/api/geo/discover?${params}`);
+      const data = (await response.json()) as { features?: LiveFeature[]; meta?: LiveMeta; error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Live discovery unavailable");
+      setLiveFeatures(data.features ?? []);
+      setLiveMeta(data.meta ?? null);
+    } catch (error) {
+      setLiveFeatures([]);
+      setLiveMeta({ unavailable: true, source: "OpenStreetMap via Overpass API" });
+      setLiveError(error instanceof Error ? error.message : "Live discovery unavailable");
+    } finally {
+      setLiveLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    const timer = window.setTimeout(() => discoverLive(selected), 300);
+    return () => window.clearTimeout(timer);
+  }, [discoverLive, selected]);
+
+  async function runPlanner() {
+    setPlannerLoading(true);
+    try {
+      const response = await fetch("/api/recommend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(planner) });
+      if (!response.ok) throw new Error("Recommendation model unavailable");
+      const data = (await response.json()) as { recommendations: Array<{ site: CatalogSite; score: number; reasons: string[] }>; meta: { model: string; method: string } };
+      const next = Object.fromEntries(data.recommendations.map((item) => [item.site.id, { score: item.score, reasons: item.reasons }]));
+      setRecommendations(next);
+      setModelMeta(data.meta);
+      const top = data.recommendations[0]?.site;
+      if (top) setSelectedId(top.id);
+      setPlannerOpen(false);
+    } finally {
+      setPlannerLoading(false);
+    }
+  }
+
+  function resetSearch() {
+    setQuery("");
+    setSector("All");
+    setOfficialOnly(false);
+    setRecommendations({});
+    setModelMeta(null);
   }
 
   function toggleCompare(id: string) {
-    setCompared((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current.slice(-2), id]));
+    setCompared((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current.slice(-2), id]);
   }
+
+  function downloadBrief(site: CatalogSite) {
+    const liveSummary = liveFeatures.slice(0, 12).map((feature) => `- ${feature.kind}: ${feature.name} (${feature.distanceKm} km)`).join("\n");
+    const content = [
+      "ALPHA TURKISTAN · INVESTMENT SCREENING BRIEF",
+      `Generated: ${new Date().toISOString()}`,
+      "",
+      site.name,
+      `${site.district} · ${site.areaHa > 0 ? `${site.areaHa} ha` : "Area to confirm"}`,
+      `Screening score: ${selectedScore}/100`,
+      `Sector: ${site.sector}`,
+      `Availability: ${site.availability}`,
+      `Land evidence: ${site.ownershipStatus}`,
+      `Location accuracy: ${site.locationAccuracy}`,
+      "",
+      site.description,
+      "",
+      "DOCUMENTED INFRASTRUCTURE",
+      ...site.infrastructure.map((item) => `- ${item.label}: ${item.value}${item.confirmed ? " [published]" : " [confirm]"}`),
+      "",
+      "BEST FOR",
+      ...site.bestFor.map((item) => `- ${item}`),
+      "",
+      "DUE DILIGENCE FLAGS",
+      ...site.risks.map((item) => `- ${item}`),
+      "",
+      "NEARBY PUBLIC-MAP DISCOVERY",
+      liveSummary || "- Live discovery unavailable or not loaded",
+      "",
+      `Primary source: ${site.sourceTitle}`,
+      site.sourceUrl,
+      "",
+      "This brief supports initial screening only. Verify parcel rights through Kazakhstan's public cadastral map and confirm utilities with the relevant operator.",
+    ].join("\n");
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = `${site.id}-investment-brief.txt`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  }
+
+  const liveCounts = Object.fromEntries(liveKinds.map((kind) => [kind, liveFeatures.filter((feature) => feature.kind === kind).length])) as Record<LiveFeature["kind"], number>;
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand-block">
-          <div className="brand-mark" aria-hidden="true">A</div>
-          <div>
-            <strong>ALPHA TURKISTAN</strong>
-            <span>Investment Intelligence</span>
-          </div>
+        <div className="brand-block"><div className="brand-mark">A</div><div><strong>ALPHA TURKISTAN</strong><span>Investment Intelligence</span></div></div>
+        <div className="region-control"><span>Region</span><strong>Turkistan Region</strong><i>⌄</i></div>
+        <div className="header-stats">
+          <div><strong>{meta?.total ?? "—"}</strong><span>source records</span></div>
+          <div><strong>{meta?.officialRecords ?? "—"}</strong><span>official</span></div>
+          <div><strong>{liveFeatures.length}</strong><span>nearby features</span></div>
         </div>
-
-        <div className="region-control" aria-label="Selected region">
-          <span className="control-label">Region</span>
-          <strong>Turkistan Region</strong>
-          <span aria-hidden="true">⌄</span>
-        </div>
-
-        <div className="header-stats" aria-label="Portfolio summary">
-          <div><strong>47</strong><span>screened</span></div>
-          <div><strong>12</strong><span>available</span></div>
-          <div><strong>9</strong><span>utility-ready</span></div>
-        </div>
-
-        <nav className="top-actions" aria-label="Workspace actions">
-          <button className="language-button" type="button">EN <span>⌄</span></button>
-          <button className="workspace-button" type="button"><span className="pulse-dot" /> Investor workspace</button>
-        </nav>
+        <div className="system-status"><span className={`status-light ${meta?.storage === "d1" ? "online" : "warming"}`} /><div><strong>System online</strong><small>{meta?.storage === "d1" ? "D1 + live GIS" : "Curated cache + live GIS"}</small></div></div>
       </header>
 
       <section className="workspace">
-        <aside className="filter-panel" aria-label="Investment site filters">
-          <div className="panel-heading">
-            <div>
-              <span className="eyebrow">Site finder</span>
-              <h1>Find the right place to build.</h1>
-            </div>
-            <span className="beta-pill">BETA</span>
-          </div>
+        <aside className="filter-panel">
+          <div className="panel-heading"><div><span className="eyebrow">Investor site finder</span><h1>Find where your project can work.</h1></div><span className="live-pill">LIVE</span></div>
 
-          <label className="search-box">
-            <span aria-hidden="true">⌕</span>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search district or material"
-              aria-label="Search district or material"
-            />
-            <kbd>⌘K</kbd>
-          </label>
+          <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try cotton, 50 MW, rail…" aria-label="Search sites, materials and business types" />{query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search">×</button>}</label>
 
           <div className="filter-section">
-            <div className="section-title"><span>BUSINESS TYPE</span><button type="button" onClick={() => setSector("All")}>Reset</button></div>
+            <div className="section-title"><span>BUSINESS TYPE</span><button type="button" onClick={resetSearch}>Reset</button></div>
             <div className="sector-grid">
-              {sectorOptions.map((option) => (
-                <button
-                  type="button"
-                  key={option}
-                  className={sector === option ? "active" : ""}
-                  onClick={() => setSector(option)}
-                  aria-pressed={sector === option}
-                >
-                  <span className={`sector-icon ${option.toLowerCase()}`} aria-hidden="true">{option === "All" ? "•" : option.charAt(0)}</span>
-                  {option}
-                </button>
-              ))}
+              {sectors.map((option) => <button type="button" key={option} className={sector === option ? "active" : ""} onClick={() => setSector(option)} aria-pressed={sector === option}><b>{option === "All" ? "•" : option.charAt(0)}</b><span>{sectorLabels[option]}</span></button>)}
             </div>
           </div>
 
           <div className="filter-section compact">
-            <div className="section-title"><span>LAND STATUS</span></div>
-            <label className="toggle-row">
-              <div><strong>Show free land only</strong><span>Exclude occupied or reserved parcels</span></div>
-              <input type="checkbox" checked={freeOnly} onChange={(event) => setFreeOnly(event.target.checked)} />
-              <span className="toggle" aria-hidden="true" />
-            </label>
+            <label className="toggle-row"><div><strong>Official sources only</strong><span>Hide records that still need operator confirmation</span></div><input type="checkbox" checked={officialOnly} onChange={(event) => setOfficialOnly(event.target.checked)} /><span className="toggle" /></label>
           </div>
 
-          <div className="results-heading">
-            <span><strong>{visibleSites.length}</strong> matching sites</span>
-            <button type="button">AI ranked <span>↓</span></button>
-          </div>
+          <section className={`planner-card ${plannerOpen ? "open" : ""}`}>
+            <button type="button" className="planner-toggle" onClick={() => setPlannerOpen((open) => !open)}><span><i>✦</i><b>Match my project</b><small>{modelMeta ? `${modelMeta.model} ranking active` : "Set land, power and logistics needs"}</small></span><strong>{plannerOpen ? "−" : "+"}</strong></button>
+            {plannerOpen && <div className="planner-fields">
+              <label><span>Project type</span><select value={planner.sector} onChange={(event) => setPlanner((state) => ({ ...state, sector: event.target.value }))}>{sectors.filter((item) => item !== "All").map((item) => <option key={item}>{item}</option>)}</select></label>
+              <label><span>Land needed (ha)</span><input type="number" min="0" max="2000" value={planner.landHa ?? ""} onChange={(event) => setPlanner((state) => ({ ...state, landHa: Number(event.target.value) }))} /></label>
+              <label><span>Power needed (MW)</span><input type="number" min="0" max="500" value={planner.powerMw ?? ""} onChange={(event) => setPlanner((state) => ({ ...state, powerMw: Number(event.target.value) }))} /></label>
+              <label><span>Key material</span><input value={planner.material ?? ""} onChange={(event) => setPlanner((state) => ({ ...state, material: event.target.value }))} placeholder="cotton" /></label>
+              <label className="rail-check"><input type="checkbox" checked={planner.needsRail ?? false} onChange={(event) => setPlanner((state) => ({ ...state, needsRail: event.target.checked }))} /><span>Rail access required</span></label>
+              <button type="button" className="run-model" onClick={runPlanner} disabled={plannerLoading}>{plannerLoading ? "Ranking…" : "Rank locations"}</button>
+            </div>}
+          </section>
 
+          <div className="results-heading"><span><strong>{rankedSites.length}</strong> matching locations</span><span>{loading ? "Searching…" : recommendations && Object.keys(recommendations).length ? "Project fit ↓" : "Evidence ranked ↓"}</span></div>
           <div className="site-list">
-            {visibleSites.map((site) => (
-              <button
-                type="button"
-                className={`site-card ${site.id === selectedId ? "selected" : ""}`}
-                onClick={() => chooseSite(site)}
-                key={site.id}
-              >
-                <span className={`availability-dot ${statusClass(site.availability)}`} />
-                <span className="site-card-copy">
-                  <strong>{site.name}</strong>
-                  <span>{site.district} · {site.area} ha</span>
-                  <small>{site.sector} · {site.ownership.split("·")[0]}</small>
-                </span>
-                <span className="mini-score">{site.score}<small>AI</small></span>
-              </button>
-            ))}
-            {visibleSites.length === 0 && <div className="empty-state"><strong>No sites match.</strong><span>Try another sector or turn off the free-land filter.</span></div>}
+            {rankedSites.map((site) => <SiteCard key={site.id} site={site} selected={site.id === selectedId} recommendation={recommendations[site.id]} onClick={() => setSelectedId(site.id)} />)}
+            {!loading && rankedSites.length === 0 && <div className="empty-state"><strong>No matching records</strong><span>Try a broader material, district or business type.</span><button type="button" onClick={resetSearch}>Clear filters</button></div>}
           </div>
         </aside>
 
-        <section className="map-stage" aria-label="Interactive map of investment sites">
+        <section className="map-stage" aria-label="Interactive investment map">
           <div ref={mapContainer} className="map-container" />
+          {mapStatus !== "ready" && <div className="map-loading"><div className="map-grid" /><strong>{mapStatus === "error" ? "Map could not initialize" : "Loading geographic map…"}</strong><span>Site records remain available in the side panel.</span></div>}
 
-          <div className="map-toolbar" aria-label="Map layers">
-            <span className="toolbar-label">MAP LAYERS</span>
-            <button type="button" className={layers.power ? "active power" : ""} onClick={() => setLayers((state) => ({ ...state, power: !state.power }))} aria-pressed={layers.power}><i /> Power grid</button>
-            <button type="button" className={layers.rail ? "active rail" : ""} onClick={() => setLayers((state) => ({ ...state, rail: !state.rail }))} aria-pressed={layers.rail}><i /> Rail</button>
-            <button type="button" className={layers.materials ? "active material" : ""} onClick={() => setLayers((state) => ({ ...state, materials: !state.materials }))} aria-pressed={layers.materials}><i /> Materials</button>
+          <div className="map-toolbar">
+            <span>LIVE LAYERS</span>
+            {liveKinds.map((kind) => <button type="button" key={kind} className={`${kind} ${liveLayers[kind] ? "active" : ""}`} onClick={() => setLiveLayers((state) => ({ ...state, [kind]: !state[kind] }))} aria-pressed={liveLayers[kind]}><i />{kind}<b>{liveCounts[kind]}</b></button>)}
           </div>
 
-          <div className="map-legend">
-            <span><i className="available" /> Available</span>
-            <span><i className="option" /> Under option</span>
-            <span><i className="occupied" /> Occupied</span>
+          <div className="map-data-card">
+            <span className={`status-light ${liveLoading ? "warming" : liveError ? "error" : "online"}`} />
+            <div><strong>{liveLoading ? "Discovering nearby infrastructure…" : liveError ? "Live discovery temporarily unavailable" : `${liveFeatures.length} nearby public-map features`}</strong><span>{liveMeta?.source ?? "OpenStreetMap via Overpass API"} · screening data</span></div>
+            {selected && <button type="button" onClick={() => discoverLive(selected)} disabled={liveLoading}>↻</button>}
           </div>
 
-          <div className="map-caption">
-            <span className="live-indicator" />
-            <div><strong>Investor map · demonstration dataset</strong><span>Connect cadastre and utility APIs for authoritative records</span></div>
-          </div>
+          <div className="map-legend"><span><i className="official" />Official record</span><span><i className="registry" />Needs confirmation</span><span><i className="live" />Live discovery</span></div>
         </section>
 
-        <aside className="insight-panel" aria-label="Selected site investment brief">
-          <div className="insight-scroll">
-            <div className="insight-topline">
-              <span className={`status-pill ${statusClass(selected.availability)}`}><i />{selected.availability}</span>
-              <button className="more-button" type="button" aria-label="More site actions">•••</button>
+        <aside className="insight-panel">
+          {selected ? <>
+            <div className="insight-scroll">
+              <div className="insight-topline"><span className={`evidence-pill ${selected.evidenceLevel}`}><i />{evidenceLabel(selected)}</span><span className="source-date">Checked {sourceDate(selected.sourceCheckedAt)}</span></div>
+              <div className="site-title-row"><div><span className="eyebrow">{selected.district}</span><h2>{selected.name}</h2><p>{selected.sector} · {selected.areaHa > 0 ? `${selected.areaHa} hectares` : "area to confirm"} · {selected.locationAccuracy} point</p></div><ScoreRing score={selectedScore} /></div>
+
+              <div className="decision-summary"><span>✦</span><div><strong>{selectedRecommendation ? "Project-specific verdict" : "Screening verdict"}</strong><p>{selectedRecommendation?.reasons.join(". ") || selected.description}</p>{modelMeta && <small>{modelMeta.method} · {modelMeta.model}</small>}</div></div>
+
+              <section className="detail-section">
+                <div className="detail-heading"><h3>Documented infrastructure</h3><span>{selected.infrastructure.filter((item) => item.confirmed).length}/{selected.infrastructure.length} published</span></div>
+                <div className="metric-grid">
+                  {selected.infrastructure.map((item, index) => <div key={`${item.key}-${index}`} className={!item.confirmed ? "unconfirmed" : ""}><span>{item.key.charAt(0).toUpperCase()}</span><small>{item.label}</small><strong>{item.value}</strong><i>{item.confirmed ? "Published" : "Confirm"}</i></div>)}
+                </div>
+              </section>
+
+              <section className="detail-section">
+                <div className="detail-heading"><h3>Land & ownership evidence</h3><span>{selected.locationAccuracy} location</span></div>
+                <div className="ownership-card"><div className="parcel-icon" /><div><small>CURRENT EVIDENCE STATUS</small><strong>{selected.ownershipStatus}</strong><span>{selected.availability}</span></div></div>
+                <div className="ownership-actions"><a href="https://map.gov4c.kz/egkn/" target="_blank" rel="noreferrer">Open public cadastral map ↗</a><span>Legal owner names require official cadastral verification.</span></div>
+              </section>
+
+              <section className="detail-section">
+                <div className="detail-heading"><h3>Nearby materials & business fit</h3><span>Source context</span></div>
+                <div className="material-tags">{selected.materials.map((item) => <span key={item}>{item}</span>)}</div>
+                <div className="best-for"><small>BEST FOR</small><p>{selected.bestFor.join(" · ")}</p></div>
+              </section>
+
+              <section className="detail-section">
+                <div className="detail-heading"><h3>Live map discovery</h3><span>{liveFeatures.length} features / 20 km</span></div>
+                <div className="live-summary-grid">{liveKinds.map((kind) => <div key={kind}><i className={kind}>{kind.charAt(0).toUpperCase()}</i><span>{kind}</span><strong>{liveCounts[kind]}</strong></div>)}</div>
+                <p className="data-disclaimer">{liveMeta?.disclaimer ?? "Nearby public-map features indicate context only; they do not confirm capacity, serviceability or ownership."}</p>
+              </section>
+
+              <section className="detail-section">
+                <div className="detail-heading"><h3>Explainable fit model</h3><span>Weighted screening</span></div>
+                <div className="fit-bars">{selected.fit.map((item) => <div key={item.label} title={item.rationale}><span>{item.label}</span><strong>{item.value}</strong><i><b style={{ width: `${item.value}%` }} /></i><small>{item.rationale}</small></div>)}</div>
+              </section>
+
+              <section className="risk-box"><strong>Due diligence flags</strong>{selected.risks.map((risk) => <span key={risk}><i>!</i>{risk}</span>)}</section>
+
+              <section className="source-box"><small>PRIMARY RECORD</small><a href={selected.sourceUrl} target="_blank" rel="noreferrer">{selected.sourceTitle} ↗</a><span>Facts shown as “published” come from this source. Location points marked approximate are not parcel boundaries.</span></section>
             </div>
-
-            <div className="site-title-row">
-              <div>
-                <span className="eyebrow">{selected.district}</span>
-                <h2>{selected.name}</h2>
-                <p>{selected.sector} opportunity · {selected.area} hectares</p>
-              </div>
-              <SuitabilityRing score={selected.score} />
-            </div>
-
-            <div className="ai-summary">
-              <div className="spark-mark" aria-hidden="true">✦</div>
-              <div><strong>AI location verdict</strong><p>{selected.summary}</p></div>
-            </div>
-
-            <section className="detail-section">
-              <div className="detail-heading"><h3>Site readiness</h3><span>Updated {selected.updated}</span></div>
-              <div className="metric-grid">
-                <div><span className="metric-icon">P</span><small>Power capacity</small><strong>{selected.power}</strong></div>
-                <div><span className="metric-icon">W</span><small>Water access</small><strong>{selected.water}</strong></div>
-                <div><span className="metric-icon">R</span><small>Road access</small><strong>{selected.road}</strong></div>
-                <div><span className="metric-icon">T</span><small>Rail access</small><strong>{selected.rail}</strong></div>
-              </div>
-            </section>
-
-            <section className="detail-section ownership-section">
-              <div className="detail-heading"><h3>Land & ownership</h3><span className="verified-tag">✓ Verified</span></div>
-              <div className="ownership-card">
-                <div className={`land-icon ${statusClass(selected.availability)}`}><span /></div>
-                <div><small>REGISTERED STATUS</small><strong>{selected.ownership}</strong><span>Parcel area: {selected.area} ha</span></div>
-              </div>
-            </section>
-
-            <section className="detail-section">
-              <div className="detail-heading"><h3>Nearby materials</h3><span>Within 80 km</span></div>
-              <div className="material-tags">
-                {selected.materials.map((material) => <span key={material}>{material}<small>●</small></span>)}
-              </div>
-            </section>
-
-            <section className="detail-section">
-              <div className="detail-heading"><h3>AI classification</h3><span>4 weighted signals</span></div>
-              <div className="fit-bars">
-                {selected.fit.map((item) => (
-                  <div key={item.label}>
-                    <span>{item.label}</span><strong>{item.value}</strong>
-                    <i><b style={{ width: `${item.value}%` }} /></i>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="risk-box">
-              <strong>Due diligence flags</strong>
-              {selected.risks.map((risk) => <span key={risk}><i>!</i>{risk}</span>)}
-            </section>
-          </div>
-
-          <div className="insight-actions">
-            <button type="button" className="compare-button" onClick={() => toggleCompare(selected.id)} aria-pressed={compared.includes(selected.id)}>
-              {compared.includes(selected.id) ? "✓ In comparison" : "+ Compare site"}
-            </button>
-            <button type="button" className="brief-button">Open full brief <span>↗</span></button>
-          </div>
+            <div className="insight-actions"><button type="button" className="compare-button" onClick={() => toggleCompare(selected.id)} aria-pressed={compared.includes(selected.id)}>{compared.includes(selected.id) ? "✓ Comparing" : "+ Compare"}</button><button type="button" className="brief-button" onClick={() => downloadBrief(selected)}>Download investor brief ↓</button></div>
+          </> : <div className="no-selection"><strong>Select a location</strong><span>Use search, filters or the map to open an investor record.</span></div>}
         </aside>
       </section>
 
-      {compared.length > 0 && (
-        <div className="compare-tray" role="status">
-          <span><strong>{compared.length}/3</strong> sites selected for comparison</span>
-          <div>{compared.map((id) => <i key={id}>{sites.find((site) => site.id === id)?.name}<button type="button" onClick={() => toggleCompare(id)} aria-label={`Remove ${id}`}>×</button></i>)}</div>
-          <button type="button" disabled={compared.length < 2}>Compare now</button>
-        </div>
-      )}
+      {compared.length > 0 && <div className="compare-tray"><span><strong>{compared.length}/3</strong> selected</span><div>{compared.map((id) => <i key={id}>{sites.find((site) => site.id === id)?.name}<button type="button" onClick={() => toggleCompare(id)}>×</button></i>)}</div><button type="button" disabled={compared.length < 2} onClick={() => setQuery(compared.map((id) => sites.find((site) => site.id === id)?.district.split(" ")[0]).filter(Boolean).join(" "))}>Compare records</button></div>}
     </main>
   );
 }

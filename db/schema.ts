@@ -1,4 +1,37 @@
-// Intentionally empty by default.
-// Add Drizzle tables here when the site actually needs a database.
-// See examples/d1/db/schema.ts for an opt-in example.
-export {};
+import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+
+export const investmentSites = sqliteTable(
+  "investment_sites",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    district: text("district").notNull(),
+    sector: text("sector").notNull(),
+    availability: text("availability").notNull(),
+    ownershipStatus: text("ownership_status").notNull(),
+    evidenceLevel: text("evidence_level").notNull(),
+    locationAccuracy: text("location_accuracy").notNull(),
+    areaHa: real("area_ha").notNull(),
+    latitude: real("latitude").notNull(),
+    longitude: real("longitude").notNull(),
+    baseScore: integer("base_score").notNull(),
+    powerMw: real("power_mw"),
+    hasRail: integer("has_rail", { mode: "boolean" }).notNull().default(false),
+    description: text("description").notNull(),
+    sourceTitle: text("source_title").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    sourceCheckedAt: text("source_checked_at").notNull(),
+    infrastructureJson: text("infrastructure_json").notNull(),
+    materialsJson: text("materials_json").notNull(),
+    fitJson: text("fit_json").notNull(),
+    bestForJson: text("best_for_json").notNull(),
+    risksJson: text("risks_json").notNull(),
+    searchTerms: text("search_terms").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("investment_sites_sector_idx").on(table.sector),
+    index("investment_sites_district_idx").on(table.district),
+    index("investment_sites_score_idx").on(table.baseScore),
+  ],
+);
