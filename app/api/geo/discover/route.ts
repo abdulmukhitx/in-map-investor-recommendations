@@ -45,15 +45,17 @@ export async function GET(request: Request) {
 
   const query = `[out:json][timeout:24];(
     way(around:${Math.round(radius)},${lat},${lng})["power"~"line|minor_line|cable"];
-    nwr(around:${Math.round(radius)},${lat},${lng})["power"~"substation|plant|generator"];
     way(around:${Math.round(radius)},${lat},${lng})["railway"="rail"];
+    way(around:${Math.round(radius)},${lat},${lng})["waterway"~"river|canal"];
+  );out tags center geom;
+  (
+    nwr(around:${Math.round(radius)},${lat},${lng})["power"~"substation|plant|generator"];
     nwr(around:${Math.round(radius)},${lat},${lng})["railway"~"station|halt|yard"];
     nwr(around:${Math.round(radius)},${lat},${lng})["landuse"="industrial"];
     nwr(around:${Math.round(radius)},${lat},${lng})["landuse"="quarry"];
     nwr(around:${Math.round(radius)},${lat},${lng})["man_made"="works"];
     nwr(around:${Math.round(radius)},${lat},${lng})["natural"="water"];
-    way(around:${Math.round(radius)},${lat},${lng})["waterway"~"river|canal"];
-  );out tags center geom 180;`;
+  );out tags center 180;`;
 
   try {
     const response = await fetch("https://overpass-api.de/api/interpreter", {
@@ -87,8 +89,11 @@ export async function GET(request: Request) {
         };
       })
       .filter((feature): feature is NonNullable<typeof feature> => feature !== null)
-      .sort((a, b) => a.distanceKm - b.distanceKm)
-      .slice(0, 80);
+      .sort((a, b) => {
+        const geometryPriority = Number(Boolean(b.geometry?.length && b.geometry.length > 1)) - Number(Boolean(a.geometry?.length && a.geometry.length > 1));
+        return geometryPriority || a.distanceKm - b.distanceKm;
+      })
+      .slice(0, 120);
 
     return Response.json(
       {
