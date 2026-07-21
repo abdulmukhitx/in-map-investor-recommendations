@@ -2,16 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Layer, LayerGroup, Map as LeafletMap } from "leaflet";
-import type { CatalogSite, ProjectNeed, Sector } from "../lib/catalog";
+import type { CatalogSite } from "../lib/catalog";
 import "leaflet/dist/leaflet.css";
 
-type SitesMeta = {
-  storage: "d1" | "seed";
-  total: number;
-  returned: number;
-  officialRecords: number;
-  generatedAt: string;
-  warning: string | null;
+type Locale = "ru" | "kk";
+type Category = "agriculture" | "manufacturing" | "logistics" | "energy" | "other";
+type ProductKind = "wheat" | "soy" | "rice" | "cotton" | "vegetables" | "solar" | "factory" | "logistics" | "custom";
+
+type InvestorProfile = {
+  category: Category | "";
+  productKey: string;
+  customProduct: string;
+  sizeHa: number;
+  powerNeed: "low" | "medium" | "high";
+  waterNeed: boolean;
+  railNeeded: boolean;
 };
 
 type LiveFeature = {
@@ -26,15 +31,6 @@ type LiveFeature = {
   infrastructureType?: string;
   osmUrl: string;
 };
-
-type LiveMeta = {
-  source?: string;
-  observedAt?: string;
-  disclaimer?: string;
-  unavailable?: boolean;
-};
-
-type Recommendation = { score: number; reasons: string[] };
 
 type AgroCellProps = {
   cell_id: string;
@@ -60,7 +56,7 @@ type AgroCellProps = {
   best_crop: string;
 };
 
-type AgroFeature = { type: "Feature"; id?: string; properties: AgroCellProps; geometry: object };
+type AgroFeature = { type: "Feature"; properties: AgroCellProps; geometry: object };
 type AgroCollection = {
   type: "FeatureCollection";
   metadata: {
@@ -72,31 +68,189 @@ type AgroCollection = {
   features: AgroFeature[];
 };
 
-type MapMode = "electricity" | "soy" | "rice" | "cotton" | "vegetables" | "ndvi" | "ndwi" | "ndbi";
-type AdviceProject = "soy" | "rice" | "cotton" | "vegetables" | "solar" | "factory";
+type AiAdvice = {
+  title: string;
+  summary: string;
+  pluses: string[];
+  minuses: string[];
+  nextSteps: string[];
+  provider: "groq" | "rules";
+  model?: string;
+};
 
-const sectors: Array<"All" | Sector> = ["All", "Agro", "Manufacturing", "Logistics", "Energy", "Tourism"];
-const sectorLabels: Record<string, string> = { All: "All", Agro: "Agro", Manufacturing: "Factory", Logistics: "Logistics", Energy: "Energy", Tourism: "Tourism" };
-const liveKinds: LiveFeature["kind"][] = ["power", "rail", "industry", "material", "water"];
-const mapModes: Array<{ id: MapMode; label: string; short: string }> = [
-  { id: "electricity", label: "Power grid / Электросеть", short: "Power" },
-  { id: "soy", label: "Soy / Соя", short: "Soy" },
-  { id: "rice", label: "Rice / Рис", short: "Rice" },
-  { id: "cotton", label: "Cotton / Хлопок", short: "Cotton" },
-  { id: "vegetables", label: "Vegetables / Овощи", short: "Vegetables" },
-  { id: "ndvi", label: "NDVI vegetation", short: "NDVI" },
-  { id: "ndwi", label: "NDWI water", short: "NDWI" },
-  { id: "ndbi", label: "NDBI built / dry", short: "NDBI" },
+const initialProfile: InvestorProfile = {
+  category: "",
+  productKey: "",
+  customProduct: "",
+  sizeHa: 100,
+  powerNeed: "medium",
+  waterNeed: true,
+  railNeeded: false,
+};
+
+const text = {
+  ru: {
+    subtitle: "Навигатор для инвестора",
+    region: "Туркестанская область",
+    editProject: "Изменить проект",
+    project: "Ваш проект",
+    bestZones: "Лучшие зоны",
+    bestZonesHint: "Чем выше оценка, тем лучше исходные условия для проекта.",
+    mapTitle: "Карта пригодности",
+    mapLoading: "Загружаем карту и спутниковые данные…",
+    mapError: "Карта временно недоступна",
+    excellent: "Лучше всего",
+    possible: "Можно рассматривать",
+    weak: "Слабая зона",
+    clickHint: "Нажмите на зону, чтобы увидеть плюсы и минусы",
+    power: "Электричество",
+    rail: "Железная дорога",
+    water: "Вода и каналы",
+    selectedZone: "Выбранная зона",
+    why: "Что здесь хорошо и что мешает",
+    pluses: "Плюсы",
+    minuses: "Минусы и риски",
+    steps: "Что проверить дальше",
+    checking: "Готовим понятное заключение…",
+    ownership: "Земля и собственник",
+    ownershipUnknown: "По этой зоне собственник не подтверждён",
+    cadastral: "Проверить участок в кадастре ↗",
+    nearbySite: "Ближайшая инвестиционная площадка",
+    indicators: "Показать технические показатели",
+    vegetation: "Состояние растительности",
+    moisture: "Влага",
+    builtDry: "Застройка / сухая почва",
+    dataQuality: "Качество данных",
+    download: "Скачать краткое заключение",
+    dataNote: "Это предварительный отбор. Перед вложением нужны кадастр, анализ почвы, вода и технические условия на подключение.",
+    wizardTitle: "Что вы хотите открыть или производить?",
+    wizardLead: "Ответьте на несколько простых вопросов — мы покажем подходящие зоны на карте.",
+    language: "Язык",
+    step: "Шаг",
+    of: "из",
+    categoryQuestion: "Выберите направление проекта",
+    productQuestion: "Что именно вы хотите производить?",
+    productHint: "Можно выбрать готовый вариант или описать свой.",
+    ownVariant: "Свой вариант",
+    ownPlaceholder: "Например: мукомольный завод, теплица, производство кирпича…",
+    needsQuestion: "Что важно для проекта?",
+    landArea: "Сколько земли нужно, гектаров",
+    powerNeed: "Потребность в электричестве",
+    low: "Небольшая",
+    medium: "Средняя",
+    high: "Высокая",
+    waterNeed: "Нужна постоянная вода или орошение",
+    railNeed: "Нужна железная дорога рядом",
+    back: "Назад",
+    next: "Далее",
+    showMap: "Показать лучшие зоны",
+    change: "Изменить",
+    zonesFound: "подходящих зон",
+    source: "Спутник Sentinel‑2 за 2025 год + открытая инфраструктура",
+    aiRules: "Понятная модель оценки",
+    aiGroq: "Заключение Groq AI",
+  },
+  kk: {
+    subtitle: "Инвесторға арналған навигатор",
+    region: "Түркістан облысы",
+    editProject: "Жобаны өзгерту",
+    project: "Сіздің жобаңыз",
+    bestZones: "Үздік аймақтар",
+    bestZonesHint: "Баға жоғары болған сайын жобаның бастапқы жағдайы жақсырақ.",
+    mapTitle: "Жарамдылық картасы",
+    mapLoading: "Карта мен спутниктік деректер жүктелуде…",
+    mapError: "Карта уақытша қолжетімсіз",
+    excellent: "Ең қолайлы",
+    possible: "Қарастыруға болады",
+    weak: "Қолайсыз аймақ",
+    clickHint: "Артықшылықтары мен тәуекелдерін көру үшін аймақты басыңыз",
+    power: "Электр желісі",
+    rail: "Теміржол",
+    water: "Су және каналдар",
+    selectedZone: "Таңдалған аймақ",
+    why: "Бұл жердің артықшылықтары мен кедергілері",
+    pluses: "Артықшылықтары",
+    minuses: "Кемшіліктері мен тәуекелдері",
+    steps: "Келесі тексерулер",
+    checking: "Түсінікті қорытынды дайындалуда…",
+    ownership: "Жер және меншік иесі",
+    ownershipUnknown: "Бұл аймақтың меншік иесі расталмаған",
+    cadastral: "Кадастрдан тексеру ↗",
+    nearbySite: "Ең жақын инвестициялық алаң",
+    indicators: "Техникалық көрсеткіштерді көрсету",
+    vegetation: "Өсімдік жағдайы",
+    moisture: "Ылғал",
+    builtDry: "Құрылыс / құрғақ топырақ",
+    dataQuality: "Деректер сапасы",
+    download: "Қысқаша қорытындыны жүктеу",
+    dataNote: "Бұл — алдын ала іріктеу. Инвестиция алдында кадастр, топырақ талдауы, су және электрге қосылу шарттары қажет.",
+    wizardTitle: "Не ашқыңыз немесе өндіргіңіз келеді?",
+    wizardLead: "Бірнеше қарапайым сұраққа жауап беріңіз — картадан қолайлы аймақтарды көрсетеміз.",
+    language: "Тіл",
+    step: "Қадам",
+    of: "ішінен",
+    categoryQuestion: "Жоба бағытын таңдаңыз",
+    productQuestion: "Нақты не өндіргіңіз келеді?",
+    productHint: "Дайын нұсқаны таңдаңыз немесе өз ойыңызды жазыңыз.",
+    ownVariant: "Өз нұсқаңыз",
+    ownPlaceholder: "Мысалы: ұн зауыты, жылыжай, кірпіш өндірісі…",
+    needsQuestion: "Жоба үшін не маңызды?",
+    landArea: "Қажетті жер көлемі, гектар",
+    powerNeed: "Электр қуатына қажеттілік",
+    low: "Төмен",
+    medium: "Орташа",
+    high: "Жоғары",
+    waterNeed: "Тұрақты су немесе суару қажет",
+    railNeed: "Жақын жерде теміржол қажет",
+    back: "Артқа",
+    next: "Әрі қарай",
+    showMap: "Үздік аймақтарды көрсету",
+    change: "Өзгерту",
+    zonesFound: "қолайлы аймақ",
+    source: "2025 жылғы Sentinel‑2 спутнигі + ашық инфрақұрылым",
+    aiRules: "Түсінікті бағалау моделі",
+    aiGroq: "Groq AI қорытындысы",
+  },
+};
+
+const categories: Array<{ id: Category; icon: string; ru: string; kk: string; ruHint: string; kkHint: string }> = [
+  { id: "agriculture", icon: "🌾", ru: "Сельское хозяйство", kk: "Ауыл шаруашылығы", ruHint: "Пшеница, рис, соя, овощи", kkHint: "Бидай, күріш, соя, көкөніс" },
+  { id: "manufacturing", icon: "🏭", ru: "Производство", kk: "Өндіріс", ruHint: "Завод, переработка, стройматериалы", kkHint: "Зауыт, өңдеу, құрылыс материалдары" },
+  { id: "logistics", icon: "🚚", ru: "Логистика", kk: "Логистика", ruHint: "Склад, холодильник, распределение", kkHint: "Қойма, тоңазытқыш, тарату" },
+  { id: "energy", icon: "☀️", ru: "Энергетика", kk: "Энергетика", ruHint: "Солнечная, ветровая, биогаз", kkHint: "Күн, жел, биогаз" },
+  { id: "other", icon: "✦", ru: "Другой проект", kk: "Басқа жоба", ruHint: "Опишите свою идею", kkHint: "Өз идеяңызды жазыңыз" },
 ];
 
-const adviceLabels: Record<AdviceProject, string> = {
-  soy: "Soy processing / Соя",
-  rice: "Rice farming / Рис",
-  cotton: "Cotton & textile / Хлопок",
-  vegetables: "Vegetables / Овощи",
-  solar: "Solar generation / Солнечная",
-  factory: "Factory / Производство",
+const products: Record<Category, Array<{ id: string; ru: string; kk: string }>> = {
+  agriculture: [
+    { id: "wheat", ru: "Пшеница", kk: "Бидай" },
+    { id: "rice", ru: "Рис", kk: "Күріш" },
+    { id: "soy", ru: "Соя", kk: "Соя" },
+    { id: "cotton", ru: "Хлопок", kk: "Мақта" },
+    { id: "vegetables", ru: "Овощи и теплица", kk: "Көкөніс және жылыжай" },
+  ],
+  manufacturing: [
+    { id: "food", ru: "Пищевая переработка", kk: "Тамақ өнімдерін өңдеу" },
+    { id: "textile", ru: "Текстиль", kk: "Тоқыма өндірісі" },
+    { id: "building", ru: "Стройматериалы", kk: "Құрылыс материалдары" },
+    { id: "factory", ru: "Другой завод", kk: "Басқа зауыт" },
+  ],
+  logistics: [
+    { id: "warehouse", ru: "Складской комплекс", kk: "Қойма кешені" },
+    { id: "cold", ru: "Холодильный склад", kk: "Тоңазытқыш қойма" },
+    { id: "distribution", ru: "Распределительный центр", kk: "Тарату орталығы" },
+  ],
+  energy: [
+    { id: "solar", ru: "Солнечная электростанция", kk: "Күн электр станциясы" },
+    { id: "wind", ru: "Ветровая электростанция", kk: "Жел электр станциясы" },
+    { id: "biogas", ru: "Биогаз", kk: "Биогаз" },
+  ],
+  other: [],
 };
+
+function clamp(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
 
 function distanceBetween(lat1: number, lng1: number, lat2: number, lng2: number) {
   const radians = (value: number) => value * Math.PI / 180;
@@ -106,157 +260,141 @@ function distanceBetween(lat1: number, lng1: number, lat2: number, lng2: number)
   return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function scoreColor(score: number) {
-  if (score >= 75) return "#087f6b";
-  if (score >= 55) return "#75a958";
-  if (score >= 35) return "#d7aa3c";
-  return "#b66b55";
+function escapeHtml(value: string) {
+  return value.replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character] ?? character);
 }
 
-function indexScore(value: number, key: "ndvi" | "ndwi" | "ndbi", data: AgroCollection) {
+function productKind(profile: InvestorProfile): ProductKind {
+  const value = `${profile.productKey} ${profile.customProduct}`.toLowerCase();
+  if (/wheat|пшениц|бидай/.test(value)) return "wheat";
+  if (/rice|рис|күріш/.test(value)) return "rice";
+  if (/soy|соя/.test(value)) return "soy";
+  if (/cotton|хлоп|мақта/.test(value)) return "cotton";
+  if (/veget|овощ|теплиц|көкөніс|жылыжай/.test(value)) return "vegetables";
+  if (/solar|солн|күн/.test(value)) return "solar";
+  if (profile.category === "manufacturing") return "factory";
+  if (profile.category === "logistics") return "logistics";
+  if (profile.category === "energy") return "solar";
+  if (profile.category === "agriculture") return "custom";
+  return "custom";
+}
+
+function productName(profile: InvestorProfile, locale: Locale) {
+  if (profile.customProduct.trim()) return profile.customProduct.trim();
+  const option = profile.category ? products[profile.category].find((item) => item.id === profile.productKey) : undefined;
+  return option?.[locale] ?? (locale === "ru" ? "Новый проект" : "Жаңа жоба");
+}
+
+function normalized(value: number, key: string, data: AgroCollection) {
   const range = data.metadata.normalization_percentiles[key];
   if (!range || range.p90 <= range.p10) return 50;
-  return Math.max(0, Math.min(100, ((value - range.p10) / (range.p90 - range.p10)) * 100));
+  return clamp(((value - range.p10) / (range.p90 - range.p10)) * 100);
 }
 
-function evidenceLabel(site: CatalogSite) {
-  if (site.evidenceLevel === "official") return "Official source";
-  if (site.evidenceLevel === "registry") return "Registry evidence";
-  return "Public-map discovery";
+function scoreCell(cell: AgroCellProps, profile: InvestorProfile, data: AgroCollection, sites: CatalogSite[]) {
+  const kind = productKind(profile);
+  const ndvi = normalized(cell.ndvi, "ndvi", data);
+  const ndwi = normalized(cell.ndwi, "ndwi", data);
+  const ndmi = normalized(cell.ndmi, "ndmi", data);
+  const ndbi = normalized(cell.ndbi, "ndbi", data);
+  const bsi = normalized(cell.bsi, "bsi", data);
+  const nearestSiteDistance = sites.length
+    ? Math.min(...sites.map((site) => distanceBetween(cell.latitude, cell.longitude, site.latitude, site.longitude)))
+    : 50;
+  const infrastructureProxy = clamp(100 - nearestSiteDistance * 2.1);
+
+  if (kind === "wheat") return clamp(ndvi * 0.4 + (100 - bsi) * 0.2 + (100 - Math.abs(ndmi - 48) * 1.4) * 0.2 + cell.confidence * 0.2);
+  if (kind === "soy") return clamp(cell.soy * 0.88 + infrastructureProxy * 0.12);
+  if (kind === "rice") return clamp(cell.rice * 0.82 + ndwi * 0.12 + infrastructureProxy * 0.06);
+  if (kind === "cotton") return clamp(cell.cotton * 0.86 + infrastructureProxy * 0.14);
+  if (kind === "vegetables") return clamp(cell.vegetables * 0.78 + ndwi * 0.1 + infrastructureProxy * 0.12);
+  if (kind === "solar") return clamp(cell.solar * 0.82 + infrastructureProxy * 0.18);
+  if (kind === "factory") return clamp(cell.industrial_land * 0.62 + infrastructureProxy * 0.38);
+  if (kind === "logistics") return clamp(cell.industrial_land * 0.48 + ndbi * 0.18 + infrastructureProxy * 0.34);
+  const agriculturalAverage = (cell.soy + cell.cotton + cell.vegetables) / 3;
+  return clamp(profile.category === "agriculture" ? agriculturalAverage * 0.82 + ndvi * 0.18 : cell.industrial_land * 0.55 + infrastructureProxy * 0.45);
 }
 
-function sourceDate(value: string) {
-  return new Intl.DateTimeFormat("en", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00Z`));
+function zoneClass(score: number) {
+  if (score >= 75) return "excellent";
+  if (score >= 55) return "possible";
+  return "weak";
 }
 
-function ScoreRing({ score }: { score: number }) {
-  return (
-    <div className="score-ring" style={{ "--score": `${score * 3.6}deg` } as React.CSSProperties}>
-      <div><strong>{score}</strong><span>FIT</span></div>
-    </div>
-  );
-}
-
-function SiteCard({ site, selected, recommendation, onClick }: { site: CatalogSite; selected: boolean; recommendation?: Recommendation; onClick: () => void }) {
-  const score = recommendation?.score ?? site.baseScore;
-  return (
-    <button type="button" className={`site-card ${selected ? "selected" : ""}`} onClick={onClick}>
-      <span className={`evidence-dot ${site.evidenceLevel}`} />
-      <span className="site-card-copy">
-        <strong>{site.name}</strong>
-        <span>{site.district} · {site.areaHa > 0 ? `${site.areaHa} ha` : "area to confirm"}</span>
-        <small>{site.sector} · {evidenceLabel(site)}</small>
-        {recommendation?.reasons[0] && <em>{recommendation.reasons[0]}</em>}
-      </span>
-      <span className="mini-score">{score}<small>FIT</small></span>
-    </button>
-  );
+function zoneColor(score: number) {
+  if (score >= 75) return "#16835d";
+  if (score >= 55) return "#e4a72e";
+  return "#c95f52";
 }
 
 export default function Home() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const leafletRef = useRef<typeof import("leaflet") | null>(null);
-  const siteLayerRef = useRef<LayerGroup | null>(null);
-  const liveLayerRef = useRef<LayerGroup | null>(null);
   const agroLayerRef = useRef<LayerGroup | null>(null);
   const boundaryLayerRef = useRef<LayerGroup | null>(null);
+  const siteLayerRef = useRef<LayerGroup | null>(null);
+  const liveLayerRef = useRef<LayerGroup | null>(null);
+
+  const [locale, setLocale] = useState<Locale>("ru");
+  const [wizardOpen, setWizardOpen] = useState(true);
+  const [wizardStep, setWizardStep] = useState(1);
+  const [profile, setProfile] = useState<InvestorProfile>(initialProfile);
+  const [analysisReady, setAnalysisReady] = useState(false);
+  const [agroData, setAgroData] = useState<AgroCollection | null>(null);
   const [sites, setSites] = useState<CatalogSite[]>([]);
-  const [meta, setMeta] = useState<SitesMeta | null>(null);
-  const [selectedId, setSelectedId] = useState("");
-  const [query, setQuery] = useState("");
-  const [sector, setSector] = useState<"All" | Sector>("All");
-  const [officialOnly, setOfficialOnly] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [selectedCell, setSelectedCell] = useState<AgroCellProps | null>(null);
   const [mapStatus, setMapStatus] = useState<"loading" | "ready" | "error">("loading");
   const [liveFeatures, setLiveFeatures] = useState<LiveFeature[]>([]);
-  const [liveMeta, setLiveMeta] = useState<LiveMeta | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
-  const [liveError, setLiveError] = useState("");
-  const [liveLayers, setLiveLayers] = useState<Record<LiveFeature["kind"], boolean>>({ power: true, rail: true, industry: true, material: true, water: false });
-  const [agroData, setAgroData] = useState<AgroCollection | null>(null);
-  const [selectedCell, setSelectedCell] = useState<AgroCellProps | null>(null);
-  const [mapMode, setMapMode] = useState<MapMode>("electricity");
-  const [adviceProject, setAdviceProject] = useState<AdviceProject>("soy");
-  const [analysisTarget, setAnalysisTarget] = useState<{ latitude: number; longitude: number; label: string } | null>(null);
-  const [planner, setPlanner] = useState<ProjectNeed>({ sector: "Manufacturing", landHa: 20, powerMw: 5, needsRail: false, material: "" });
-  const [plannerOpen, setPlannerOpen] = useState(false);
-  const [plannerLoading, setPlannerLoading] = useState(false);
-  const [recommendations, setRecommendations] = useState<Record<string, Recommendation>>({});
-  const [modelMeta, setModelMeta] = useState<{ model: string; method: string } | null>(null);
-  const [compared, setCompared] = useState<string[]>([]);
+  const [discoveryCellId, setDiscoveryCellId] = useState("");
+  const [visibleNetworks, setVisibleNetworks] = useState({ power: true, rail: true, water: true });
+  const [aiAdvice, setAiAdvice] = useState<AiAdvice | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
 
-  const selected = sites.find((site) => site.id === selectedId) ?? sites[0];
-  const selectedRecommendation = selected ? recommendations[selected.id] : undefined;
-  const selectedScore = selectedRecommendation?.score ?? selected?.baseScore ?? 0;
+  const t = text[locale];
+  const currentProduct = productName(profile, locale);
 
-  const locationAdvice = useMemo(() => {
-    if (!selectedCell) return null;
-    const satelliteScore = adviceProject === "factory" ? selectedCell.industrial_land : selectedCell[adviceProject];
-    const nearestPower = liveFeatures.filter((feature) => feature.kind === "power").sort((a, b) => a.distanceKm - b.distanceKm)[0];
-    const nearestRail = liveFeatures.filter((feature) => feature.kind === "rail").sort((a, b) => a.distanceKm - b.distanceKm)[0];
-    const nearestWater = liveFeatures.filter((feature) => feature.kind === "water").sort((a, b) => a.distanceKm - b.distanceKm)[0];
-    const nearestOfficial = [...sites].sort((a, b) => distanceBetween(selectedCell.latitude, selectedCell.longitude, a.latitude, a.longitude) - distanceBetween(selectedCell.latitude, selectedCell.longitude, b.latitude, b.longitude))[0];
-    const officialDistance = nearestOfficial ? distanceBetween(selectedCell.latitude, selectedCell.longitude, nearestOfficial.latitude, nearestOfficial.longitude) : null;
+  const rankedCells = useMemo(() => {
+    if (!agroData || !analysisReady) return [];
+    return agroData.features
+      .map((feature) => ({ cell: feature.properties, score: scoreCell(feature.properties, profile, agroData, sites) }))
+      .sort((a, b) => b.score - a.score);
+  }, [agroData, analysisReady, profile, sites]);
 
-    let infrastructureScore = 40;
-    if (nearestPower) infrastructureScore += nearestPower.distanceKm <= 5 ? 35 : nearestPower.distanceKm <= 15 ? 24 : nearestPower.distanceKm <= 30 ? 12 : 0;
-    if (nearestRail) infrastructureScore += nearestRail.distanceKm <= 10 ? 15 : nearestRail.distanceKm <= 25 ? 8 : 0;
-    if (nearestWater && adviceProject !== "factory" && adviceProject !== "solar") infrastructureScore += nearestWater.distanceKm <= 5 ? 20 : nearestWater.distanceKm <= 15 ? 12 : 4;
-    infrastructureScore = Math.min(100, infrastructureScore);
+  const selectedScore = useMemo(() => {
+    if (!selectedCell || !agroData) return 0;
+    return scoreCell(selectedCell, profile, agroData, sites);
+  }, [agroData, profile, selectedCell, sites]);
 
-    let score = Math.round(satelliteScore * (adviceProject === "factory" ? 0.55 : 0.7) + infrastructureScore * (adviceProject === "factory" ? 0.45 : 0.3));
-    if (adviceProject === "rice" && !nearestWater && selectedCell.surface_water_pct < 1) score = Math.max(0, score - 18);
-    const level = score >= 75 ? "Strong screening fit" : score >= 55 ? "Conditional fit" : "Low / verify alternatives";
-    const reasons = [
-      `Satellite ${adviceProject === "factory" ? "industrial-land" : adviceProject} signal: ${satelliteScore}/100`,
-      nearestPower ? `Mapped ${nearestPower.detail} electricity feature ${nearestPower.distanceKm} km away` : "No mapped electricity feature found within the current search radius",
-      adviceProject === "rice" ? (nearestWater ? `Mapped water/canal feature ${nearestWater.distanceKm} km away` : "Rice requires a verified irrigation source and water rights") : `NDVI ${selectedCell.ndvi.toFixed(3)}, NDWI ${selectedCell.ndwi.toFixed(3)}, NDBI ${selectedCell.ndbi.toFixed(3)}`,
-      officialDistance !== null && nearestOfficial ? `${nearestOfficial.name} is approximately ${officialDistance.toFixed(1)} km away` : "No investment-zone record nearby",
-    ];
-    const narrative = adviceProject === "factory"
-      ? `${level}. A factory is only practical here if the grid operator confirms connection capacity and the cadastral record permits industrial use. ${nearestRail ? `Rail is mapped ${nearestRail.distanceKm} km away.` : "Rail access was not found nearby."}`
-      : `${level}. The 2025 satellite mosaic shows relative land and moisture conditions for ${adviceLabels[adviceProject].split(" /")[0].toLowerCase()}. Before investment, test salinity, texture and drainage and confirm irrigation availability.`;
-    return { score, level, satelliteScore, infrastructureScore, reasons, narrative, nearestPower, nearestRail, nearestWater, nearestOfficial, officialDistance };
-  }, [adviceProject, liveFeatures, selectedCell, sites]);
+  const nearestSite = useMemo(() => {
+    if (!selectedCell || !sites.length) return null;
+    const site = [...sites].sort((a, b) => distanceBetween(selectedCell.latitude, selectedCell.longitude, a.latitude, a.longitude) - distanceBetween(selectedCell.latitude, selectedCell.longitude, b.latitude, b.longitude))[0];
+    return { site, distance: distanceBetween(selectedCell.latitude, selectedCell.longitude, site.latitude, site.longitude) };
+  }, [selectedCell, sites]);
 
-  const rankedSites = useMemo(() => {
-    if (!Object.keys(recommendations).length) return sites;
-    return [...sites].sort((a, b) => (recommendations[b.id]?.score ?? b.baseScore) - (recommendations[a.id]?.score ?? a.baseScore));
-  }, [recommendations, sites]);
+  const nearestInfrastructure = useMemo(() => {
+    const nearest = (kind: LiveFeature["kind"]) => liveFeatures.filter((feature) => feature.kind === kind).sort((a, b) => a.distanceKm - b.distanceKm)[0];
+    return { power: nearest("power"), rail: nearest("rail"), water: nearest("water") };
+  }, [liveFeatures]);
+
+  const networkCounts = useMemo(() => ({
+    power: liveFeatures.filter((feature) => feature.kind === "power").length,
+    rail: liveFeatures.filter((feature) => feature.kind === "rail").length,
+    water: liveFeatures.filter((feature) => feature.kind === "water").length,
+  }), [liveFeatures]);
 
   useEffect(() => {
     const controller = new AbortController();
-    const timer = window.setTimeout(async () => {
-      setLoading(true);
-      const params = new URLSearchParams({ query, sector, official: String(officialOnly) });
-      try {
-        const response = await fetch(`/api/sites?${params}`, { signal: controller.signal });
-        if (!response.ok) throw new Error(`Search returned ${response.status}`);
-        const data = (await response.json()) as { sites: CatalogSite[]; meta: SitesMeta };
-        setSites(data.sites);
-        setMeta(data.meta);
-        setSelectedId((current) => data.sites.some((site) => site.id === current) ? current : data.sites[0]?.id ?? "");
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") return;
-      } finally {
-        setLoading(false);
-      }
-    }, 220);
-    return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [officialOnly, query, sector]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/data/agro-suitability.geojson", { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Agro layer returned ${response.status}`);
-        return response.json() as Promise<AgroCollection>;
-      })
-      .then(setAgroData)
-      .catch((error) => {
-        if (!(error instanceof DOMException && error.name === "AbortError")) console.error("Agro screening layer unavailable", error);
-      });
+    Promise.all([
+      fetch("/data/agro-suitability.geojson", { signal: controller.signal }).then((response) => response.json() as Promise<AgroCollection>),
+      fetch("/api/sites", { signal: controller.signal }).then((response) => response.json() as Promise<{ sites: CatalogSite[] }>),
+    ]).then(([agro, catalog]) => {
+      setAgroData(agro);
+      setSites(catalog.sites ?? []);
+    }).catch((error) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) console.error("Regional data unavailable", error);
+    });
     return () => controller.abort();
   }, []);
 
@@ -269,18 +407,14 @@ export default function Home() {
         if (!active || !mapContainer.current) return;
         leafletRef.current = L;
         const map = L.map(mapContainer.current, { zoomControl: false, minZoom: 5, maxZoom: 16, preferCanvas: true }).setView([42.35, 68.55], 7);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          maxZoom: 19,
-          attribution: "© OpenStreetMap contributors",
-          crossOrigin: true,
-        }).addTo(map);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors", crossOrigin: true }).addTo(map);
         L.control.zoom({ position: "bottomright" }).addTo(map);
         boundaryLayerRef.current = L.layerGroup().addTo(map);
         agroLayerRef.current = L.layerGroup().addTo(map);
         siteLayerRef.current = L.layerGroup().addTo(map);
         liveLayerRef.current = L.layerGroup().addTo(map);
         mapRef.current = map;
-        window.setTimeout(() => map.invalidateSize(), 100);
+        window.setTimeout(() => map.invalidateSize(), 120);
         setMapStatus("ready");
       } catch {
         setMapStatus("error");
@@ -304,405 +438,288 @@ export default function Home() {
       .then((boundary) => {
         if (controller.signal.aborted) return;
         layer.clearLayers();
-        L.geoJSON(boundary, { style: { color: "#173f3a", weight: 2, opacity: 0.8, fillOpacity: 0 } }).addTo(layer);
+        L.geoJSON(boundary, { style: { color: "#16453e", weight: 2, opacity: 0.8, fillOpacity: 0 } }).addTo(layer);
       })
       .catch(() => undefined);
     return () => controller.abort();
   }, [mapStatus]);
 
+  const selectCell = useCallback((cell: AgroCellProps, fly = true) => {
+    setSelectedCell(cell);
+    if (fly) mapRef.current?.flyTo([cell.latitude, cell.longitude], Math.max(mapRef.current.getZoom(), 8), { duration: 0.6 });
+  }, []);
+
   useEffect(() => {
     const L = leafletRef.current;
     const layer = agroLayerRef.current;
-    if (!L || !layer || !agroData || mapStatus !== "ready") return;
+    if (!L || !layer || !agroData || !analysisReady || mapStatus !== "ready") return;
     layer.clearLayers();
-    if (mapMode === "electricity") return;
-
-    const rendered = L.geoJSON(agroData as never, {
+    const safeProduct = escapeHtml(currentProduct);
+    L.geoJSON(agroData as never, {
       style: (feature) => {
-        const props = (feature?.properties ?? {}) as AgroCellProps;
-        const value = mapMode === "ndvi" || mapMode === "ndwi" || mapMode === "ndbi"
-          ? indexScore(props[mapMode], mapMode, agroData)
-          : props[mapMode];
-        const isSelected = selectedCell?.cell_id === props.cell_id;
+        const cell = (feature?.properties ?? {}) as AgroCellProps;
+        const score = scoreCell(cell, profile, agroData, sites);
+        const active = selectedCell?.cell_id === cell.cell_id;
         return {
-          color: isSelected ? "#123f39" : "#ffffff",
-          weight: isSelected ? 3 : 0.65,
-          opacity: isSelected ? 1 : 0.7,
-          fillColor: scoreColor(value),
-          fillOpacity: isSelected ? 0.78 : 0.58,
+          color: active ? "#143f39" : "#ffffff",
+          weight: active ? 3 : 0.7,
+          opacity: active ? 1 : 0.65,
+          fillColor: zoneColor(score),
+          fillOpacity: active ? 0.78 : 0.6,
         };
       },
       onEachFeature: (feature, mapLayer: Layer) => {
-        const props = (feature.properties ?? {}) as AgroCellProps;
-        const value = mapMode === "ndvi" || mapMode === "ndwi" || mapMode === "ndbi"
-          ? props[mapMode].toFixed(3)
-          : `${props[mapMode]}/100`;
-        mapLayer.bindTooltip(`<strong>${props.cell_id}</strong><br>${mapModes.find((item) => item.id === mapMode)?.label}: ${value}<br>Click for location advice`, { sticky: true });
-        mapLayer.on("click", () => {
-          setSelectedCell(props);
-          setAdviceProject(mapMode === "ndvi" || mapMode === "ndwi" || mapMode === "ndbi" ? "soy" : mapMode);
-          setAnalysisTarget({ latitude: props.latitude, longitude: props.longitude, label: props.cell_id });
-          mapRef.current?.flyTo([props.latitude, props.longitude], Math.max(mapRef.current.getZoom(), 9), { duration: 0.6 });
-        });
+        const cell = (feature.properties ?? {}) as AgroCellProps;
+        const score = scoreCell(cell, profile, agroData, sites);
+        const level = score >= 75 ? t.excellent : score >= 55 ? t.possible : t.weak;
+        mapLayer.bindTooltip(`<strong>${safeProduct}: ${score}/100</strong><br>${escapeHtml(level)}<br>${escapeHtml(t.clickHint)}`, { sticky: true });
+        mapLayer.on("click", () => selectCell(cell));
       },
-    });
-    rendered.addTo(layer);
-  }, [agroData, mapMode, mapStatus, selectedCell?.cell_id]);
+    }).addTo(layer);
+  }, [agroData, analysisReady, currentProduct, mapStatus, profile, selectCell, selectedCell?.cell_id, sites, t]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !agroData || mapStatus !== "ready") return;
-    const handleMapClick = (event: { latlng: { lat: number; lng: number } }) => {
-      const nearest = [...agroData.features].sort((a, b) =>
-        distanceBetween(event.latlng.lat, event.latlng.lng, a.properties.latitude, a.properties.longitude)
-        - distanceBetween(event.latlng.lat, event.latlng.lng, b.properties.latitude, b.properties.longitude)
-      )[0]?.properties;
-      if (!nearest) return;
-      setSelectedCell(nearest);
-      setAnalysisTarget({ latitude: event.latlng.lat, longitude: event.latlng.lng, label: nearest.cell_id });
+    if (!map || !agroData || !analysisReady || mapStatus !== "ready") return;
+    const handleClick = (event: { latlng: { lat: number; lng: number } }) => {
+      const nearest = [...agroData.features].sort((a, b) => distanceBetween(event.latlng.lat, event.latlng.lng, a.properties.latitude, a.properties.longitude) - distanceBetween(event.latlng.lat, event.latlng.lng, b.properties.latitude, b.properties.longitude))[0]?.properties;
+      if (nearest) selectCell(nearest, false);
     };
-    map.on("click", handleMapClick);
-    return () => { map.off("click", handleMapClick); };
-  }, [agroData, mapStatus]);
+    map.on("click", handleClick);
+    return () => { map.off("click", handleClick); };
+  }, [agroData, analysisReady, mapStatus, selectCell]);
 
   useEffect(() => {
     const L = leafletRef.current;
     const layer = siteLayerRef.current;
     if (!L || !layer || mapStatus !== "ready") return;
     layer.clearLayers();
-    rankedSites.forEach((site) => {
-      const score = recommendations[site.id]?.score ?? site.baseScore;
-      const icon = L.divIcon({
-        className: "investment-marker-shell",
-        html: `<div class="investment-marker ${site.evidenceLevel} ${site.id === selectedId ? "selected" : ""}"><span>${score}</span></div>`,
-        iconSize: [44, 50],
-        iconAnchor: [22, 44],
-      });
-      const marker = L.marker([site.latitude, site.longitude], { icon, title: site.name, riseOnHover: true });
-      marker.on("click", () => {
-        setSelectedId(site.id);
-        setSelectedCell(null);
-        setAnalysisTarget(null);
-      });
-      marker.bindTooltip(`<strong>${site.name}</strong><br>${evidenceLabel(site)} · ${score} fit`, { direction: "top", offset: [0, -36] });
+    sites.forEach((site) => {
+      const marker = L.circleMarker([site.latitude, site.longitude], { radius: 6, color: "#ffffff", weight: 2, fillColor: "#0f5d52", fillOpacity: 0.95 });
+      marker.bindTooltip(`<strong>${escapeHtml(site.name)}</strong><br>${escapeHtml(locale === "ru" ? "Инвестиционная площадка" : "Инвестициялық алаң")}`);
       marker.addTo(layer);
     });
-  }, [mapStatus, rankedSites, recommendations, selectedId]);
+  }, [locale, mapStatus, sites]);
+
+  const discoverInfrastructure = useCallback(async (cell: AgroCellProps) => {
+    setLiveLoading(true);
+    setDiscoveryCellId("");
+    try {
+      const params = new URLSearchParams({ lat: String(cell.latitude), lng: String(cell.longitude), radius: "30000" });
+      const response = await fetch(`/api/geo/discover?${params}`);
+      const payload = (await response.json()) as { features?: LiveFeature[] };
+      setLiveFeatures(response.ok ? payload.features ?? [] : []);
+    } catch {
+      setLiveFeatures([]);
+    } finally {
+      setLiveLoading(false);
+      setDiscoveryCellId(cell.cell_id);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedCell || !analysisReady) return;
+    const timer = window.setTimeout(() => discoverInfrastructure(selectedCell), 250);
+    return () => window.clearTimeout(timer);
+  }, [analysisReady, discoverInfrastructure, selectedCell]);
 
   useEffect(() => {
     const L = leafletRef.current;
     const layer = liveLayerRef.current;
     if (!L || !layer || mapStatus !== "ready") return;
     layer.clearLayers();
-    liveFeatures.filter((feature) => liveLayers[feature.kind]).forEach((feature) => {
-      const popup = `<strong>${feature.name}</strong><br>${feature.detail}<br>${feature.distanceKm} km from selected location<br><a href="${feature.osmUrl}" target="_blank" rel="noreferrer">Open OSM record</a>`;
-      if (feature.geometry && feature.geometry.length >= 2) {
-        const isArea = feature.geometry.length >= 4 && feature.geometry[0][0] === feature.geometry.at(-1)?.[0] && feature.geometry[0][1] === feature.geometry.at(-1)?.[1];
-        const color = feature.kind === "power" ? "#e69b2d" : feature.kind === "rail" ? "#334b48" : feature.kind === "water" ? "#2e83b6" : feature.kind === "material" ? "#9a6f34" : "#7d6253";
-        const path = isArea
-          ? L.polygon(feature.geometry, { color, weight: 2, fillColor: color, fillOpacity: 0.16 })
-          : L.polyline(feature.geometry, { color, weight: feature.kind === "power" ? 3.5 : 2.5, opacity: 0.88, dashArray: feature.kind === "rail" ? "8 5" : undefined });
-        path.bindTooltip(`${feature.kind === "power" ? "⚡ " : ""}${feature.name} · ${feature.detail}`, { sticky: true });
-        path.bindPopup(popup);
+    liveFeatures.filter((feature) => feature.kind in visibleNetworks && visibleNetworks[feature.kind as keyof typeof visibleNetworks]).forEach((feature) => {
+      const label = `${escapeHtml(feature.name)} · ${escapeHtml(feature.detail)}`;
+      const color = feature.kind === "power" ? "#e9901a" : feature.kind === "rail" ? "#394d4a" : "#2387b7";
+      if (feature.geometry && feature.geometry.length > 1) {
+        const path = L.polyline(feature.geometry, { color, weight: feature.kind === "power" ? 4 : 2.5, opacity: 0.9, dashArray: feature.kind === "rail" ? "8 5" : undefined });
+        path.bindTooltip(label, { sticky: true });
         path.addTo(layer);
       } else {
-        const symbol = feature.kind === "power" ? "⚡" : feature.kind === "rail" ? "R" : feature.kind === "water" ? "W" : feature.kind === "material" ? "M" : "I";
-        const icon = L.divIcon({ className: "live-marker-shell", html: `<div class="live-marker ${feature.kind}">${symbol}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
-        const marker = L.marker([feature.latitude, feature.longitude], { icon, title: `${feature.name} · ${feature.detail}` });
-        marker.bindTooltip(`<strong>${feature.name}</strong><br>${feature.detail}`, { direction: "top" });
-        marker.bindPopup(popup);
-        marker.addTo(layer);
+        const symbol = feature.kind === "power" ? "⚡" : feature.kind === "rail" ? "R" : "W";
+        const icon = L.divIcon({ className: "network-marker-shell", html: `<div class="network-marker ${feature.kind}">${symbol}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
+        L.marker([feature.latitude, feature.longitude], { icon }).bindTooltip(label).addTo(layer);
       }
     });
-  }, [liveFeatures, liveLayers, mapStatus]);
+  }, [liveFeatures, mapStatus, visibleNetworks]);
 
   useEffect(() => {
-    if (!selected || selectedCell || !mapRef.current || mapStatus !== "ready") return;
-    mapRef.current.flyTo([selected.latitude, selected.longitude], 10, { duration: 0.8 });
-  }, [mapStatus, selected, selectedCell]);
-
-  const discoverLive = useCallback(async (target: { latitude: number; longitude: number }) => {
-    setLiveLoading(true);
-    setLiveError("");
-    try {
-      const params = new URLSearchParams({ lat: String(target.latitude), lng: String(target.longitude), radius: "30000" });
-      const response = await fetch(`/api/geo/discover?${params}`);
-      const data = (await response.json()) as { features?: LiveFeature[]; meta?: LiveMeta; error?: string };
-      if (!response.ok) throw new Error(data.error ?? "Live discovery unavailable");
-      setLiveFeatures(data.features ?? []);
-      setLiveMeta(data.meta ?? null);
-    } catch (error) {
-      setLiveFeatures([]);
-      setLiveMeta({ unavailable: true, source: "OpenStreetMap via Overpass API" });
-      setLiveError(error instanceof Error ? error.message : "Live discovery unavailable");
-    } finally {
-      setLiveLoading(false);
-    }
-  }, []);
+    if (!analysisReady || !rankedCells.length || selectedCell) return;
+    selectCell(rankedCells[0].cell, true);
+  }, [analysisReady, rankedCells, selectCell, selectedCell]);
 
   useEffect(() => {
-    const target = analysisTarget ?? selected;
-    if (!target) return;
-    const timer = window.setTimeout(() => discoverLive(target), 300);
-    return () => window.clearTimeout(timer);
-  }, [analysisTarget, discoverLive, selected]);
-
-  async function runPlanner() {
-    setPlannerLoading(true);
-    try {
-      const response = await fetch("/api/recommend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(planner) });
-      if (!response.ok) throw new Error("Recommendation model unavailable");
-      const data = (await response.json()) as { recommendations: Array<{ site: CatalogSite; score: number; reasons: string[] }>; meta: { model: string; method: string } };
-      const next = Object.fromEntries(data.recommendations.map((item) => [item.site.id, { score: item.score, reasons: item.reasons }]));
-      setRecommendations(next);
-      setModelMeta(data.meta);
-      const top = data.recommendations[0]?.site;
-      if (top) {
-        setSelectedId(top.id);
-        setSelectedCell(null);
-        setAnalysisTarget(null);
+    if (!selectedCell || !analysisReady || discoveryCellId !== selectedCell.cell_id || liveLoading) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setAiLoading(true);
+      setAiAdvice(null);
+      try {
+        const response = await fetch("/api/ai/advisor", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            locale,
+            profile: { ...profile, product: productName(profile, locale), kind: productKind(profile) },
+            zone: { ...selectedCell, score: selectedScore },
+            infrastructure: {
+              powerKm: nearestInfrastructure.power?.distanceKm ?? null,
+              railKm: nearestInfrastructure.rail?.distanceKm ?? null,
+              waterKm: nearestInfrastructure.water?.distanceKm ?? null,
+            },
+            nearbySite: nearestSite ? { name: nearestSite.site.name, distanceKm: Number(nearestSite.distance.toFixed(1)), ownershipStatus: nearestSite.site.ownershipStatus } : null,
+          }),
+        });
+        if (!response.ok) throw new Error("Advisor unavailable");
+        setAiAdvice(await response.json() as AiAdvice);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setAiAdvice(null);
+      } finally {
+        if (!controller.signal.aborted) setAiLoading(false);
       }
-      setPlannerOpen(false);
-    } finally {
-      setPlannerLoading(false);
-    }
-  }
+    }, 350);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [analysisReady, discoveryCellId, liveLoading, locale, nearestInfrastructure, nearestSite, profile, selectedCell, selectedScore]);
 
-  function resetSearch() {
-    setQuery("");
-    setSector("All");
-    setOfficialOnly(false);
-    setRecommendations({});
-    setModelMeta(null);
-  }
-
-  function selectSite(id: string) {
-    setSelectedId(id);
+  function completeWizard() {
+    setAnalysisReady(true);
     setSelectedCell(null);
-    setAnalysisTarget(null);
+    setAiAdvice(null);
+    setWizardOpen(false);
+    window.setTimeout(() => mapRef.current?.invalidateSize(), 100);
   }
 
-  function selectMapMode(mode: MapMode) {
-    setMapMode(mode);
-    if (mode === "electricity") {
-      setLiveLayers((state) => ({ ...state, power: true }));
-      return;
-    }
-    if (mode !== "ndvi" && mode !== "ndwi" && mode !== "ndbi") setAdviceProject(mode);
+  function chooseCategory(category: Category) {
+    setProfile((state) => ({ ...state, category, productKey: "", customProduct: "", waterNeed: category === "agriculture", railNeeded: category === "logistics" }));
   }
 
-  function toggleCompare(id: string) {
-    setCompared((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current.slice(-2), id]);
+  function canContinue() {
+    if (wizardStep === 1) return Boolean(profile.category);
+    if (wizardStep === 2) return Boolean(profile.productKey || profile.customProduct.trim());
+    return true;
   }
 
-  function downloadBrief(site: CatalogSite) {
-    const liveSummary = liveFeatures.slice(0, 12).map((feature) => `- ${feature.kind}: ${feature.name} (${feature.distanceKm} km)`).join("\n");
-    const locationSection = selectedCell && locationAdvice ? [
-      "SELECTED LAND-CELL ANALYSIS",
-      `Cell: ${selectedCell.cell_id} at ${selectedCell.latitude}, ${selectedCell.longitude}`,
-      `Project: ${adviceLabels[adviceProject]}`,
-      `Combined screening score: ${locationAdvice.score}/100 (${locationAdvice.level})`,
-      `Satellite signal: ${locationAdvice.satelliteScore}/100`,
-      `Mapped infrastructure: ${locationAdvice.infrastructureScore}/100`,
-      `NDVI ${selectedCell.ndvi}; NDWI ${selectedCell.ndwi}; NDBI ${selectedCell.ndbi}; NDMI ${selectedCell.ndmi}`,
-      ...locationAdvice.reasons.map((reason) => `- ${reason}`),
-      "",
-    ] : [];
+  function downloadBrief() {
+    if (!selectedCell || !aiAdvice) return;
     const content = [
-      "ALPHA TURKISTAN · INVESTMENT SCREENING BRIEF",
-      `Generated: ${new Date().toISOString()}`,
+      `ALPHA TURKISTAN — ${currentProduct}`,
+      `${t.selectedZone}: ${selectedCell.cell_id} (${selectedCell.latitude.toFixed(4)}, ${selectedCell.longitude.toFixed(4)})`,
+      `${locale === "ru" ? "Оценка" : "Баға"}: ${selectedScore}/100`,
       "",
-      site.name,
-      `${site.district} · ${site.areaHa > 0 ? `${site.areaHa} ha` : "Area to confirm"}`,
-      `Screening score: ${selectedScore}/100`,
-      `Sector: ${site.sector}`,
-      `Availability: ${site.availability}`,
-      `Land evidence: ${site.ownershipStatus}`,
-      `Location accuracy: ${site.locationAccuracy}`,
+      aiAdvice.summary,
       "",
-      site.description,
+      t.pluses.toUpperCase(),
+      ...aiAdvice.pluses.map((item) => `+ ${item}`),
       "",
-      ...locationSection,
-      "DOCUMENTED INFRASTRUCTURE",
-      ...site.infrastructure.map((item) => `- ${item.label}: ${item.value}${item.confirmed ? " [published]" : " [confirm]"}`),
+      t.minuses.toUpperCase(),
+      ...aiAdvice.minuses.map((item) => `- ${item}`),
       "",
-      "BEST FOR",
-      ...site.bestFor.map((item) => `- ${item}`),
+      t.steps.toUpperCase(),
+      ...aiAdvice.nextSteps.map((item, index) => `${index + 1}. ${item}`),
       "",
-      "DUE DILIGENCE FLAGS",
-      ...site.risks.map((item) => `- ${item}`),
-      "",
-      "NEARBY PUBLIC-MAP DISCOVERY",
-      liveSummary || "- Live discovery unavailable or not loaded",
-      "",
-      `Primary source: ${site.sourceTitle}`,
-      site.sourceUrl,
-      "",
-      "This brief supports initial screening only. Verify parcel rights through Kazakhstan's public cadastral map and confirm utilities with the relevant operator.",
+      t.dataNote,
     ].join("\n");
-    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-    const href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
     const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = `${site.id}-investment-brief.txt`;
+    anchor.href = url;
+    anchor.download = `alpha-turkistan-${selectedCell.cell_id}.txt`;
     anchor.click();
-    URL.revokeObjectURL(href);
+    URL.revokeObjectURL(url);
   }
 
-  const liveCounts = Object.fromEntries(liveKinds.map((kind) => [kind, liveFeatures.filter((feature) => feature.kind === kind).length])) as Record<LiveFeature["kind"], number>;
-  const currentDiscoveryTarget = analysisTarget ?? selected;
-  const activeModeLabel = mapModes.find((item) => item.id === mapMode)?.label ?? mapMode;
+  const category = profile.category ? categories.find((item) => item.id === profile.category) : null;
+  const goodZones = rankedCells.filter((item) => item.score >= 75).length;
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand-block"><div className="brand-mark">A</div><div><strong>ALPHA TURKISTAN</strong><span>Investment Intelligence</span></div></div>
-        <div className="region-control"><span>Region</span><strong>Turkistan Region</strong><i>⌄</i></div>
-        <div className="header-stats">
-          <div><strong>{meta?.total ?? "—"}</strong><span>source records</span></div>
-          <div><strong>{meta?.officialRecords ?? "—"}</strong><span>official</span></div>
-          <div><strong>{agroData?.features.length ?? "—"}</strong><span>satellite cells</span></div>
+        <div className="brand"><span className="brand-mark">A</span><div><strong>ALPHA TURKISTAN</strong><small>{t.subtitle}</small></div></div>
+        <div className="region"><span>●</span><div><small>{locale === "ru" ? "Регион" : "Өңір"}</small><strong>{t.region}</strong></div></div>
+        <div className="top-actions">
+          <div className="language-switch" aria-label={t.language}><button type="button" className={locale === "ru" ? "active" : ""} onClick={() => setLocale("ru")}>РУС</button><button type="button" className={locale === "kk" ? "active" : ""} onClick={() => setLocale("kk")}>ҚАЗ</button></div>
+          {analysisReady && <button type="button" className="edit-project" onClick={() => { setWizardStep(1); setWizardOpen(true); }}>{t.editProject}</button>}
         </div>
-        <div className="system-status"><span className={`status-light ${meta?.storage === "d1" ? "online" : "warming"}`} /><div><strong>System online</strong><small>{meta?.storage === "d1" ? "D1 + live GIS" : "Curated cache + live GIS"}</small></div></div>
       </header>
 
-      <section className="workspace">
-        <aside className="filter-panel">
-          <div className="panel-heading"><div><span className="eyebrow">Investor site finder</span><h1>Find where your project can work.</h1></div><span className="live-pill">LIVE</span></div>
-
-          <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Try cotton, 50 MW, rail…" aria-label="Search sites, materials and business types" />{query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search">×</button>}</label>
-
-          <section className="evidence-layer-card">
-            <div><span className="eyebrow">MAP EVIDENCE LAYER</span><strong>{mapModes.find((item) => item.id === mapMode)?.label}</strong><small>{mapMode === "electricity" ? "Mapped lines, substations and voltage evidence around the selected location" : "402 regional cells derived from the Alpha Turkistan 2025 Sentinel-2 mosaic"}</small></div>
-            <label><span>Layer</span><select value={mapMode} onChange={(event) => selectMapMode(event.target.value as MapMode)} aria-label="Map evidence layer">{mapModes.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-          </section>
-
-          <div className="filter-section">
-            <div className="section-title"><span>BUSINESS TYPE</span><button type="button" onClick={resetSearch}>Reset</button></div>
-            <div className="sector-grid">
-              {sectors.map((option) => <button type="button" key={option} className={sector === option ? "active" : ""} onClick={() => setSector(option)} aria-pressed={sector === option}><b>{option === "All" ? "•" : option.charAt(0)}</b><span>{sectorLabels[option]}</span></button>)}
-            </div>
-          </div>
-
-          <div className="filter-section compact">
-            <label className="toggle-row"><div><strong>Official sources only</strong><span>Hide records that still need operator confirmation</span></div><input type="checkbox" checked={officialOnly} onChange={(event) => setOfficialOnly(event.target.checked)} /><span className="toggle" /></label>
-          </div>
-
-          <section className={`planner-card ${plannerOpen ? "open" : ""}`}>
-            <button type="button" className="planner-toggle" onClick={() => setPlannerOpen((open) => !open)}><span><i>✦</i><b>Match my project</b><small>{modelMeta ? `${modelMeta.model} ranking active` : "Set land, power and logistics needs"}</small></span><strong>{plannerOpen ? "−" : "+"}</strong></button>
-            {plannerOpen && <div className="planner-fields">
-              <label><span>Project type</span><select value={planner.sector} onChange={(event) => setPlanner((state) => ({ ...state, sector: event.target.value }))}>{sectors.filter((item) => item !== "All").map((item) => <option key={item}>{item}</option>)}</select></label>
-              <label><span>Land needed (ha)</span><input type="number" min="0" max="2000" value={planner.landHa ?? ""} onChange={(event) => setPlanner((state) => ({ ...state, landHa: Number(event.target.value) }))} /></label>
-              <label><span>Power needed (MW)</span><input type="number" min="0" max="500" value={planner.powerMw ?? ""} onChange={(event) => setPlanner((state) => ({ ...state, powerMw: Number(event.target.value) }))} /></label>
-              <label><span>Key material</span><input value={planner.material ?? ""} onChange={(event) => setPlanner((state) => ({ ...state, material: event.target.value }))} placeholder="cotton" /></label>
-              <label className="rail-check"><input type="checkbox" checked={planner.needsRail ?? false} onChange={(event) => setPlanner((state) => ({ ...state, needsRail: event.target.checked }))} /><span>Rail access required</span></label>
-              <button type="button" className="run-model" onClick={runPlanner} disabled={plannerLoading}>{plannerLoading ? "Ranking…" : "Rank locations"}</button>
-            </div>}
-          </section>
-
-          <div className="results-heading"><span><strong>{rankedSites.length}</strong> matching locations</span><span>{loading ? "Searching…" : recommendations && Object.keys(recommendations).length ? "Project fit ↓" : "Evidence ranked ↓"}</span></div>
-          <div className="site-list">
-            {rankedSites.map((site) => <SiteCard key={site.id} site={site} selected={!selectedCell && site.id === selectedId} recommendation={recommendations[site.id]} onClick={() => selectSite(site.id)} />)}
-            {!loading && rankedSites.length === 0 && <div className="empty-state"><strong>No matching records</strong><span>Try a broader material, district or business type.</span><button type="button" onClick={resetSearch}>Clear filters</button></div>}
+      <section className="investor-workspace">
+        <aside className="project-panel">
+          <div className="panel-scroll">
+            <span className="eyebrow">{t.project}</span>
+            <h1>{analysisReady ? currentProduct : t.wizardTitle}</h1>
+            {analysisReady ? <>
+              <div className="project-summary">
+                <span>{category?.icon}</span>
+                <div><strong>{category?.[locale]}</strong><small>{profile.sizeHa} {locale === "ru" ? "га земли" : "га жер"} · {t[profile.powerNeed]}</small></div>
+              </div>
+              <button type="button" className="plain-link" onClick={() => { setWizardStep(1); setWizardOpen(true); }}>{t.change}</button>
+              <div className="panel-divider" />
+              <div className="section-heading"><div><span className="eyebrow">{t.bestZones}</span><strong>{goodZones} {t.zonesFound}</strong></div><small>{t.bestZonesHint}</small></div>
+              <div className="top-zone-list">
+                {rankedCells.slice(0, 4).map((item, index) => <button type="button" key={item.cell.cell_id} className={selectedCell?.cell_id === item.cell.cell_id ? "active" : ""} onClick={() => selectCell(item.cell)}><span className="rank">{index + 1}</span><div><strong>{locale === "ru" ? "Зона" : "Аймақ"} {item.cell.cell_id}</strong><small>{item.cell.latitude.toFixed(3)}, {item.cell.longitude.toFixed(3)}</small></div><b>{item.score}</b></button>)}
+              </div>
+              <div className="data-source"><span>◎</span><p><strong>{locale === "ru" ? "На чём основана карта" : "Карта неге негізделген"}</strong><small>{t.source}</small></p></div>
+            </> : <p className="empty-copy">{t.wizardLead}</p>}
           </div>
         </aside>
 
-        <section className="map-stage" aria-label="Interactive investment map">
+        <section className="map-stage" aria-label={locale === "ru" ? "Интерактивная карта лучших зон" : "Үздік аймақтардың интерактивті картасы"}>
           <div ref={mapContainer} className="map-container" />
-          {mapStatus !== "ready" && <div className="map-loading"><div className="map-grid" /><strong>{mapStatus === "error" ? "Map could not initialize" : "Loading geographic map…"}</strong><span>Site records remain available in the side panel.</span></div>}
-
-          <div className="map-toolbar intelligence-toolbar">
-            <span>LAND & INFRASTRUCTURE</span>
-            <div className="mode-buttons">
-              {mapModes.map((mode) => <button type="button" key={mode.id} className={mapMode === mode.id ? "active" : ""} onClick={() => selectMapMode(mode.id)} aria-pressed={mapMode === mode.id}>{mode.short}</button>)}
+          {mapStatus !== "ready" && <div className="map-loading"><strong>{mapStatus === "error" ? t.mapError : t.mapLoading}</strong></div>}
+          {analysisReady && <>
+            <div className="map-project-title"><span>{t.mapTitle}</span><strong>{currentProduct}</strong><small>{rankedCells.length} {locale === "ru" ? "проанализированных зон" : "талданған аймақ"}</small></div>
+            <div className="network-controls">
+              {(["power", "rail", "water"] as const).map((kind) => <button type="button" key={kind} className={`${kind} ${visibleNetworks[kind] ? "active" : ""}`} aria-pressed={visibleNetworks[kind]} onClick={() => setVisibleNetworks((state) => ({ ...state, [kind]: !state[kind] }))}><i />{t[kind]} <b>{liveLoading ? "…" : networkCounts[kind]}</b></button>)}
             </div>
-            <div className="network-buttons">
-              {(["power", "rail", "water"] as LiveFeature["kind"][]).map((kind) => <button type="button" key={kind} className={`${kind} ${liveLayers[kind] ? "active" : ""}`} onClick={() => setLiveLayers((state) => ({ ...state, [kind]: !state[kind] }))} aria-pressed={liveLayers[kind]}><i />{kind === "power" ? "Electricity" : kind}<b>{liveCounts[kind]}</b></button>)}
-            </div>
-          </div>
-
-          <div className="map-data-card">
-            <span className={`status-light ${liveLoading ? "warming" : liveError ? "error" : "online"}`} />
-            <div><strong>{liveLoading ? "Tracing electricity, rail and water…" : liveError ? "Live infrastructure temporarily unavailable" : `${activeModeLabel} · ${liveFeatures.length} mapped infrastructure records`}</strong><span>{mapMode === "electricity" ? "Power lines are drawn as orange corridors; click a line for voltage evidence" : "Alpha Turkistan Sentinel-2 2025 · click any cell for AI advice"}</span></div>
-            {currentDiscoveryTarget && <button type="button" onClick={() => discoverLive(currentDiscoveryTarget)} disabled={liveLoading} aria-label="Refresh infrastructure">↻</button>}
-          </div>
-
-          {mapMode === "electricity"
-            ? <div className="map-legend network-legend"><span><i className="power-line" />Electricity line</span><span><i className="substation" />Substation / source</span><span><i className="rail-line" />Rail</span><span><i className="official" />Investment site</span></div>
-            : <div className="map-legend suitability-legend"><span><i className="low" />Low</span><span><i className="medium" />Conditional</span><span><i className="high" />Strong</span><span>Relative regional screening · not soil certification</span></div>}
+            <div className="map-legend"><span><i className="excellent" />{t.excellent} 75–100</span><span><i className="possible" />{t.possible} 55–74</span><span><i className="weak" />{t.weak} 0–54</span></div>
+          </>}
         </section>
 
-        <aside className="insight-panel">
-          {selected ? <>
-            <div className="insight-scroll">
-              {selectedCell && locationAdvice && <>
-                <section className="location-analysis">
-                  <div className="analysis-kicker"><span>SELECTED LAND CELL · {selectedCell.cell_id}</span><span>Sentinel-2 · {selectedCell.period.replace("_", " ")}</span></div>
-                  <div className="analysis-title-row"><div><span className="eyebrow">AI LOCATION ADVICE / АНАЛИЗ МЕСТА</span><h2>What can work here?</h2><p>{selectedCell.latitude.toFixed(4)}, {selectedCell.longitude.toFixed(4)} · {selectedCell.area_km2} km² screening cell</p></div><ScoreRing score={locationAdvice.score} /></div>
-                  <label className="project-choice"><span>Project to assess</span><select value={adviceProject} onChange={(event) => setAdviceProject(event.target.value as AdviceProject)} aria-label="Project to assess">{(Object.keys(adviceLabels) as AdviceProject[]).map((key) => <option key={key} value={key}>{adviceLabels[key]}</option>)}</select></label>
-
-                  <div className={`ai-verdict ${locationAdvice.score >= 75 ? "strong" : locationAdvice.score >= 55 ? "conditional" : "low"}`}><span>✦</span><div><strong>{locationAdvice.level}</strong><p>{locationAdvice.narrative}</p><small>Explainable screening model · satellite 2025 + mapped infrastructure</small></div></div>
-
-                  <div className="spectral-grid">
-                    <div><span>NDVI</span><strong>{selectedCell.ndvi.toFixed(3)}</strong><small>vegetation</small></div>
-                    <div><span>NDWI</span><strong>{selectedCell.ndwi.toFixed(3)}</strong><small>water signal</small></div>
-                    <div><span>NDBI</span><strong>{selectedCell.ndbi.toFixed(3)}</strong><small>built / dry</small></div>
-                    <div><span>NDMI</span><strong>{selectedCell.ndmi.toFixed(3)}</strong><small>moisture</small></div>
-                    <div><span>Active cover</span><strong>{selectedCell.active_vegetation_pct}%</strong><small>sample pixels</small></div>
-                    <div><span>Confidence</span><strong>{selectedCell.confidence}%</strong><small>data coverage</small></div>
-                  </div>
-
-                  <div className="advice-scores"><div><span>Satellite land signal</span><strong>{locationAdvice.satelliteScore}</strong><i><b style={{ width: `${locationAdvice.satelliteScore}%` }} /></i></div><div><span>Mapped infrastructure</span><strong>{locationAdvice.infrastructureScore}</strong><i><b style={{ width: `${locationAdvice.infrastructureScore}%` }} /></i></div></div>
-                  <div className="reason-list">{locationAdvice.reasons.map((reason) => <span key={reason}><i>✓</i>{reason}</span>)}</div>
-                  <p className="analysis-warning"><strong>Required before investment:</strong> cadastral ownership, zoning, soil salinity/chemistry, drainage, irrigation rights and an operator-issued grid connection study.</p>
-                </section>
-                <div className="section-separator"><span>Nearest curated investment record</span></div>
+        <aside className="advice-panel">
+          <div className="advice-scroll">
+            {selectedCell && analysisReady ? <>
+              <div className="zone-heading"><div><span className="eyebrow">{t.selectedZone} · {selectedCell.cell_id}</span><h2>{t.why}</h2><small>{selectedCell.latitude.toFixed(4)}, {selectedCell.longitude.toFixed(4)}</small></div><div className={`score-badge ${zoneClass(selectedScore)}`}><strong>{selectedScore}</strong><span>/100</span></div></div>
+              <div className={`plain-verdict ${zoneClass(selectedScore)}`}><strong>{selectedScore >= 75 ? t.excellent : selectedScore >= 55 ? t.possible : t.weak}</strong><span>{currentProduct}</span></div>
+              {aiLoading || !aiAdvice ? <div className="advice-loading"><span /><strong>{t.checking}</strong></div> : <>
+                <div className="ai-source"><span>✦</span><div><strong>{aiAdvice.title}</strong><small>{aiAdvice.provider === "groq" ? t.aiGroq : t.aiRules}</small></div></div>
+                <p className="advice-summary">{aiAdvice.summary}</p>
+                <section className="human-list plus"><h3><span>+</span>{t.pluses}</h3>{aiAdvice.pluses.map((item) => <p key={item}>{item}</p>)}</section>
+                <section className="human-list minus"><h3><span>!</span>{t.minuses}</h3>{aiAdvice.minuses.map((item) => <p key={item}>{item}</p>)}</section>
+                <section className="next-steps"><h3>{t.steps}</h3>{aiAdvice.nextSteps.map((item, index) => <p key={item}><b>{index + 1}</b>{item}</p>)}</section>
               </>}
-              <div className="insight-topline"><span className={`evidence-pill ${selected.evidenceLevel}`}><i />{evidenceLabel(selected)}</span><span className="source-date">Checked {sourceDate(selected.sourceCheckedAt)}</span></div>
-              <div className="site-title-row"><div><span className="eyebrow">{selected.district}</span><h2>{selected.name}</h2><p>{selected.sector} · {selected.areaHa > 0 ? `${selected.areaHa} hectares` : "area to confirm"} · {selected.locationAccuracy} point</p></div><ScoreRing score={selectedScore} /></div>
 
-              <div className="decision-summary"><span>✦</span><div><strong>{selectedRecommendation ? "Project-specific verdict" : "Screening verdict"}</strong><p>{selectedRecommendation?.reasons.join(". ") || selected.description}</p>{modelMeta && <small>{modelMeta.method} · {modelMeta.model}</small>}</div></div>
-
-              <section className="detail-section">
-                <div className="detail-heading"><h3>Documented infrastructure</h3><span>{selected.infrastructure.filter((item) => item.confirmed).length}/{selected.infrastructure.length} published</span></div>
-                <div className="metric-grid">
-                  {selected.infrastructure.map((item, index) => <div key={`${item.key}-${index}`} className={!item.confirmed ? "unconfirmed" : ""}><span>{item.key.charAt(0).toUpperCase()}</span><small>{item.label}</small><strong>{item.value}</strong><i>{item.confirmed ? "Published" : "Confirm"}</i></div>)}
-                </div>
+              <section className="facts-section">
+                <h3>{locale === "ru" ? "Что находится рядом" : "Жақын жерде не бар"}</h3>
+                <div className="fact-row"><span className="fact-icon power">⚡</span><div><small>{t.power}</small><strong>{nearestInfrastructure.power ? `${nearestInfrastructure.power.distanceKm} ${locale === "ru" ? "км" : "км"}` : locale === "ru" ? "Не найдено в радиусе 30 км" : "30 км радиуста табылмады"}</strong></div></div>
+                <div className="fact-row"><span className="fact-icon water">≈</span><div><small>{t.water}</small><strong>{nearestInfrastructure.water ? `${nearestInfrastructure.water.distanceKm} км` : locale === "ru" ? "Не найдено в радиусе 30 км" : "30 км радиуста табылмады"}</strong></div></div>
+                <div className="fact-row"><span className="fact-icon rail">═</span><div><small>{t.rail}</small><strong>{nearestInfrastructure.rail ? `${nearestInfrastructure.rail.distanceKm} км` : locale === "ru" ? "Не найдено в радиусе 30 км" : "30 км радиуста табылмады"}</strong></div></div>
               </section>
 
-              <section className="detail-section">
-                <div className="detail-heading"><h3>Land & ownership evidence</h3><span>{selected.locationAccuracy} location</span></div>
-                <div className="ownership-card"><div className="parcel-icon" /><div><small>CURRENT EVIDENCE STATUS</small><strong>{selected.ownershipStatus}</strong><span>{selected.availability}</span></div></div>
-                <div className="ownership-actions"><a href="https://map.gov4c.kz/egkn/" target="_blank" rel="noreferrer">Open public cadastral map ↗</a><span>Legal owner names require official cadastral verification.</span></div>
-              </section>
+              <section className="ownership-section"><h3>{t.ownership}</h3><div><span>▱</span><p><strong>{t.ownershipUnknown}</strong>{nearestSite && <small>{t.nearbySite}: {nearestSite.site.name} · {nearestSite.distance.toFixed(1)} км</small>}</p></div><a href="https://map.gov4c.kz/egkn/" target="_blank" rel="noreferrer">{t.cadastral}</a></section>
 
-              <section className="detail-section">
-                <div className="detail-heading"><h3>Nearby materials & business fit</h3><span>Source context</span></div>
-                <div className="material-tags">{selected.materials.map((item) => <span key={item}>{item}</span>)}</div>
-                <div className="best-for"><small>BEST FOR</small><p>{selected.bestFor.join(" · ")}</p></div>
-              </section>
-
-              <section className="detail-section">
-                <div className="detail-heading"><h3>Live map discovery</h3><span>{liveFeatures.length} features / 30 km</span></div>
-                <div className="live-summary-grid">{liveKinds.map((kind) => <div key={kind}><i className={kind}>{kind.charAt(0).toUpperCase()}</i><span>{kind}</span><strong>{liveCounts[kind]}</strong></div>)}</div>
-                <p className="data-disclaimer">{liveMeta?.disclaimer ?? "Nearby public-map features indicate context only; they do not confirm capacity, serviceability or ownership."}</p>
-              </section>
-
-              <section className="detail-section">
-                <div className="detail-heading"><h3>Explainable fit model</h3><span>Weighted screening</span></div>
-                <div className="fit-bars">{selected.fit.map((item) => <div key={item.label} title={item.rationale}><span>{item.label}</span><strong>{item.value}</strong><i><b style={{ width: `${item.value}%` }} /></i><small>{item.rationale}</small></div>)}</div>
-              </section>
-
-              <section className="risk-box"><strong>Due diligence flags</strong>{selected.risks.map((risk) => <span key={risk}><i>!</i>{risk}</span>)}</section>
-
-              <section className="source-box"><small>PRIMARY RECORD</small><a href={selected.sourceUrl} target="_blank" rel="noreferrer">{selected.sourceTitle} ↗</a><span>Facts shown as “published” come from this source. Location points marked approximate are not parcel boundaries.</span></section>
-            </div>
-            <div className="insight-actions"><button type="button" className="compare-button" onClick={() => toggleCompare(selected.id)} aria-pressed={compared.includes(selected.id)}>{compared.includes(selected.id) ? "✓ Comparing" : "+ Compare"}</button><button type="button" className="brief-button" onClick={() => downloadBrief(selected)}>Download investor brief ↓</button></div>
-          </> : <div className="no-selection"><strong>Select a location</strong><span>Use search, filters or the map to open an investor record.</span></div>}
+              <details className="technical-details"><summary>{t.indicators}</summary><div className="technical-grid"><div><span>NDVI · {t.vegetation}</span><strong>{selectedCell.ndvi.toFixed(3)}</strong></div><div><span>NDWI · {t.moisture}</span><strong>{selectedCell.ndwi.toFixed(3)}</strong></div><div><span>NDBI · {t.builtDry}</span><strong>{selectedCell.ndbi.toFixed(3)}</strong></div><div><span>{t.dataQuality}</span><strong>{selectedCell.confidence}%</strong></div></div></details>
+              <p className="screening-note">{t.dataNote}</p>
+            </> : <div className="no-zone"><span>↖</span><strong>{t.wizardTitle}</strong><p>{t.wizardLead}</p></div>}
+          </div>
+          {selectedCell && aiAdvice && <button type="button" className="download-brief" onClick={downloadBrief}>{t.download} ↓</button>}
         </aside>
       </section>
 
-      {compared.length > 0 && <div className="compare-tray"><span><strong>{compared.length}/3</strong> selected</span><div>{compared.map((id) => <i key={id}>{sites.find((site) => site.id === id)?.name}<button type="button" onClick={() => toggleCompare(id)}>×</button></i>)}</div><button type="button" disabled={compared.length < 2} onClick={() => setQuery(compared.map((id) => sites.find((site) => site.id === id)?.district.split(" ")[0]).filter(Boolean).join(" "))}>Compare records</button></div>}
+      {wizardOpen && <div className="wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <section className="wizard-card">
+          <div className="wizard-top"><div className="wizard-brand"><span className="brand-mark">A</span><div><strong>ALPHA TURKISTAN</strong><small>{t.subtitle}</small></div></div><div className="language-switch"><button type="button" className={locale === "ru" ? "active" : ""} onClick={() => setLocale("ru")}>РУС</button><button type="button" className={locale === "kk" ? "active" : ""} onClick={() => setLocale("kk")}>ҚАЗ</button></div></div>
+          <div className="wizard-progress"><span>{t.step} {wizardStep} {t.of} 3</span><i><b style={{ width: `${wizardStep / 3 * 100}%` }} /></i></div>
+          <div className="wizard-copy"><h2 id="wizard-title">{wizardStep === 1 ? t.categoryQuestion : wizardStep === 2 ? t.productQuestion : t.needsQuestion}</h2><p>{wizardStep === 1 ? t.wizardLead : wizardStep === 2 ? t.productHint : locale === "ru" ? "Эти ответы помогут учесть инфраструктуру и масштаб." : "Бұл жауаптар инфрақұрылым мен ауқымды ескеруге көмектеседі."}</p></div>
+
+          {wizardStep === 1 && <div className="category-grid">{categories.map((item) => <button type="button" key={item.id} className={profile.category === item.id ? "active" : ""} onClick={() => chooseCategory(item.id)}><span>{item.icon}</span><div><strong>{item[locale]}</strong><small>{locale === "ru" ? item.ruHint : item.kkHint}</small></div><i>›</i></button>)}</div>}
+
+          {wizardStep === 2 && <div className="product-step"><div className="product-grid">{profile.category && products[profile.category].map((item) => <button type="button" key={item.id} className={profile.productKey === item.id && !profile.customProduct ? "active" : ""} onClick={() => setProfile((state) => ({ ...state, productKey: item.id, customProduct: "" }))}>{item[locale]}</button>)}</div><label className="custom-product"><span>{t.ownVariant}</span><textarea value={profile.customProduct} onChange={(event) => setProfile((state) => ({ ...state, customProduct: event.target.value, productKey: event.target.value ? "" : state.productKey }))} placeholder={t.ownPlaceholder} rows={3} /></label></div>}
+
+          {wizardStep === 3 && <div className="needs-grid"><label><span>{t.landArea}</span><input type="number" min="1" max="10000" value={profile.sizeHa} onChange={(event) => setProfile((state) => ({ ...state, sizeHa: Math.max(1, Number(event.target.value)) }))} /></label><fieldset><legend>{t.powerNeed}</legend><div className="segmented">{(["low", "medium", "high"] as const).map((level) => <button type="button" key={level} className={profile.powerNeed === level ? "active" : ""} onClick={() => setProfile((state) => ({ ...state, powerNeed: level }))}>{t[level]}</button>)}</div></fieldset><label className="check-line"><input type="checkbox" checked={profile.waterNeed} onChange={(event) => setProfile((state) => ({ ...state, waterNeed: event.target.checked }))} /><span><b>≈</b>{t.waterNeed}</span></label><label className="check-line"><input type="checkbox" checked={profile.railNeeded} onChange={(event) => setProfile((state) => ({ ...state, railNeeded: event.target.checked }))} /><span><b>═</b>{t.railNeed}</span></label></div>}
+
+          <div className="wizard-actions"><button type="button" className="back-button" disabled={wizardStep === 1} onClick={() => setWizardStep((step) => Math.max(1, step - 1))}>{t.back}</button>{wizardStep < 3 ? <button type="button" className="primary-button" disabled={!canContinue()} onClick={() => setWizardStep((step) => Math.min(3, step + 1))}>{t.next} →</button> : <button type="button" className="primary-button" onClick={completeWizard}>{t.showMap} →</button>}</div>
+        </section>
+      </div>}
     </main>
   );
 }

@@ -18,20 +18,17 @@ async function request(path = "/", init = {}) {
   );
 }
 
-test("server-renders the operational investor workspace", async () => {
+test("server-renders the bilingual investor onboarding", async () => {
   const response = await request("/", { headers: { accept: "text/html" } });
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /<title>Alpha Turkistan \| Investment Site Intelligence<\/title>/i);
-  assert.match(html, /Find where your project can work\./);
-  assert.match(html, /Match my project/);
-  assert.match(html, /Interactive investment map/);
-  assert.match(html, /Power grid \/ Электросеть/);
-  assert.match(html, /NDVI vegetation/);
-  assert.match(html, /NDBI built \/ dry/);
-  assert.match(html, /Official sources only/);
-  assert.match(html, /Electricity line/);
+  assert.match(html, /<title>Alpha Turkistan — карта возможностей для инвестора<\/title>/i);
+  assert.match(html, /Что вы хотите открыть или производить\?/);
+  assert.match(html, /Выберите направление проекта/);
+  assert.match(html, /Сельское хозяйство/);
+  assert.match(html, /ҚАЗ/);
+  assert.match(html, /Интерактивная карта лучших зон/);
   assert.doesNotMatch(html, /codex-preview|demonstration dataset|react-loading-skeleton/i);
 });
 
@@ -62,9 +59,30 @@ test("project model ranks sites and explains the result", async () => {
   assert.ok(data.recommendations[0].reasons.length > 0);
 });
 
-test("source includes persistent storage, satellite screening, Leaflet and bounded infrastructure discovery", async () => {
-  const [page, schema, discovery, hosting, packageJson, migration, agroRaw] = await Promise.all([
+test("investor advisor returns a plain-language fallback without a Groq key", async () => {
+  const response = await request("/api/ai/advisor", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      locale: "ru",
+      profile: { category: "agriculture", product: "Пшеница", waterNeed: true, railNeeded: false },
+      zone: { cell_id: "TKO-1", score: 82, confidence: 96 },
+      infrastructure: { powerKm: 7, railKm: 18, waterKm: 10 },
+    }),
+  });
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.provider, "rules");
+  assert.ok(data.summary.includes("Пшеница"));
+  assert.ok(data.pluses.length >= 2);
+  assert.ok(data.minuses.length >= 1);
+  assert.equal(data.nextSteps.length, 3);
+});
+
+test("source includes project heatmap, Groq integration, storage and live infrastructure", async () => {
+  const [page, advisor, schema, discovery, hosting, packageJson, migration, agroRaw] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ai/advisor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/geo/discover/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
@@ -75,10 +93,16 @@ test("source includes persistent storage, satellite screening, Leaflet and bound
   assert.match(page, /import\("leaflet"\)/);
   assert.match(page, /tile\.openstreetmap\.org/);
   assert.match(page, /\/api\/geo\/discover/);
-  assert.match(page, /Open public cadastral map/);
-  assert.match(page, /Download investor brief/);
-  assert.match(page, /AI LOCATION ADVICE/);
-  assert.match(page, /Alpha Turkistan 2025 Sentinel-2 mosaic/);
+  assert.match(page, /\/api\/ai\/advisor/);
+  assert.match(page, /Проверить участок в кадастре/);
+  assert.match(page, /Скачать краткое заключение/);
+  assert.match(page, /function scoreCell/);
+  assert.match(page, /kind === "wheat"/);
+  assert.match(page, /Өндіріс/);
+  assert.match(page, /Показать лучшие зоны/);
+  assert.match(advisor, /GROQ_API_KEY/);
+  assert.match(advisor, /api\.groq\.com\/openai\/v1\/chat\/completions/);
+  assert.match(advisor, /response_format/);
   assert.match(schema, /investment_sites/);
   assert.match(discovery, /overpass-api\.de/);
   assert.match(discovery, /Math\.min\(30000/);
