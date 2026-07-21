@@ -69,7 +69,7 @@ export async function GET(request: Request) {
     });
     if (!response.ok) throw new Error(`Overpass returned ${response.status}`);
     const payload = (await response.json()) as { elements?: OverpassElement[]; osm3s?: { timestamp_osm_base?: string } };
-    const features = (payload.elements ?? [])
+    const mappedFeatures = (payload.elements ?? [])
       .map((element) => {
         const geometry = element.geometry?.map((item) => [item.lat, item.lon] as [number, number]);
         const geometryCenter = element.geometry?.length
@@ -95,12 +95,21 @@ export async function GET(request: Request) {
           osmUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
         };
       })
-      .filter((feature): feature is NonNullable<typeof feature> => feature !== null)
-      .sort((a, b) => {
-        const geometryPriority = Number(Boolean(b.geometry?.length && b.geometry.length > 1)) - Number(Boolean(a.geometry?.length && a.geometry.length > 1));
-        return geometryPriority || a.distanceKm - b.distanceKm;
-      })
-      .slice(0, 120);
+      .filter((feature): feature is NonNullable<typeof feature> => feature !== null);
+
+    const lineFeatures = mappedFeatures.filter((feature) => feature.geometry && feature.geometry.length > 1);
+    const pointFeatures = mappedFeatures.filter((feature) => !feature.geometry || feature.geometry.length <= 1);
+    const nearestLines = ["power", "rail", "water"].flatMap((kind) =>
+      lineFeatures
+        .filter((feature) => feature.kind === kind)
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .slice(0, 40),
+    );
+    const otherLines = lineFeatures
+      .filter((feature) => !["power", "rail", "water"].includes(feature.kind))
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, 20);
+    const features = [...nearestLines, ...otherLines, ...pointFeatures.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 60)];
 
     return Response.json(
       {
