@@ -78,7 +78,12 @@ export async function getCatalog(): Promise<{ sites: CatalogSite[]; storage: "d1
     const db = await getDb();
     const [{ total }] = await db.select({ total: count() }).from(investmentSites);
     if (Number(total) === 0) {
-      await db.insert(investmentSites).values(seedSites.map(siteToInsert)).onConflictDoNothing();
+      // D1 limits the number of bound values in one statement. Each site has
+      // 25 fields, so seed them individually instead of producing one 150-bind
+      // insert that is rejected by the production database.
+      for (const site of seedSites) {
+        await db.insert(investmentSites).values(siteToInsert(site)).onConflictDoNothing();
+      }
     }
     const rows = await db.select().from(investmentSites);
     return { sites: rows.map(rowToSite), storage: "d1" };
