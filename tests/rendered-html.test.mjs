@@ -23,7 +23,8 @@ test("server-renders the bilingual investor onboarding", async () => {
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /<title>Alpha Turkistan — карта возможностей для инвестора<\/title>/i);
+  assert.match(html, /<title>Turkistan Invest — AI-карта возможностей<\/title>/i);
+  assert.match(html, /TURKISTAN INVEST/);
   assert.match(html, /Что вы хотите открыть или производить\?/);
   assert.match(html, /Выберите направление проекта/);
   assert.match(html, /Сельское хозяйство/);

@@ -714,7 +714,7 @@ export default function Home() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">A</span><div><strong>ALPHA TURKISTAN</strong><small>{t.subtitle}</small></div></div>
+        <div className="brand"><span className="brand-mark"><img src="/turkistan-invest-logo.png" alt="" /></span><div><strong>TURKISTAN INVEST</strong><small>{t.subtitle}</small></div></div>
         <div className="region"><span>●</span><div><small>{locale === "ru" ? "Регион" : "Өңір"}</small><strong>{t.region}</strong></div></div>
         <div className="top-actions">
           <div className="language-switch" aria-label={t.language}><button type="button" className={locale === "ru" ? "active" : ""} onClick={() => setLocale("ru")}>РУС</button><button type="button" className={locale === "kk" ? "active" : ""} onClick={() => setLocale("kk")}>ҚАЗ</button></div>
@@ -811,7 +811,7 @@ export default function Home() {
 
       {wizardOpen && <div className="wizard-overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
         <section className="wizard-card">
-          <div className="wizard-top"><div className="wizard-brand"><span className="brand-mark">A</span><div><strong>ALPHA TURKISTAN</strong><small>{t.subtitle}</small></div></div><div className="language-switch"><button type="button" className={locale === "ru" ? "active" : ""} onClick={() => setLocale("ru")}>РУС</button><button type="button" className={locale === "kk" ? "active" : ""} onClick={() => setLocale("kk")}>ҚАЗ</button></div></div>
+          <div className="wizard-top"><div className="wizard-brand"><span className="brand-mark"><img src="/turkistan-invest-logo.png" alt="" /></span><div><strong>TURKISTAN INVEST</strong><small>{t.subtitle}</small></div></div><div className="language-switch"><button type="button" className={locale === "ru" ? "active" : ""} onClick={() => setLocale("ru")}>РУС</button><button type="button" className={locale === "kk" ? "active" : ""} onClick={() => setLocale("kk")}>ҚАЗ</button></div></div>
           <div className="wizard-progress"><span>{t.step} {wizardStep} {t.of} 3</span><i><b style={{ width: `${wizardStep / 3 * 100}%` }} /></i></div>
           <div className="wizard-copy"><h2 id="wizard-title">{wizardStep === 1 ? t.categoryQuestion : wizardStep === 2 ? t.productQuestion : t.needsQuestion}</h2><p>{wizardStep === 1 ? t.wizardLead : wizardStep === 2 ? t.productHint : locale === "ru" ? "Эти ответы помогут учесть инфраструктуру и масштаб." : "Бұл жауаптар инфрақұрылым мен ауқымды ескеруге көмектеседі."}</p></div>
 
