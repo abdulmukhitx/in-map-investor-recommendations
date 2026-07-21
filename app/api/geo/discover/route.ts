@@ -17,6 +17,24 @@ function distanceKm(lat1: number, lng1: number, lat2: number, lng2: number) {
   return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function distanceToSegmentKm(lat: number, lng: number, start: { lat: number; lon: number }, end: { lat: number; lon: number }) {
+  const kmPerDegreeLat = 111.195;
+  const kmPerDegreeLon = kmPerDegreeLat * Math.cos(lat * Math.PI / 180);
+  const ax = (start.lon - lng) * kmPerDegreeLon;
+  const ay = (start.lat - lat) * kmPerDegreeLat;
+  const bx = (end.lon - lng) * kmPerDegreeLon;
+  const by = (end.lat - lat) * kmPerDegreeLat;
+  const denominator = (bx - ax) ** 2 + (by - ay) ** 2;
+  if (!denominator) return Math.hypot(ax, ay);
+  const t = Math.max(0, Math.min(1, -(ax * (bx - ax) + ay * (by - ay)) / denominator));
+  return Math.hypot(ax + t * (bx - ax), ay + t * (by - ay));
+}
+
+function distanceToGeometryKm(lat: number, lng: number, geometry: Array<{ lat: number; lon: number }>) {
+  if (geometry.length === 1) return distanceKm(lat, lng, geometry[0].lat, geometry[0].lon);
+  return Math.min(...geometry.slice(1).map((end, index) => distanceToSegmentKm(lat, lng, geometry[index], end)));
+}
+
 function classify(tags: Record<string, string>) {
   if (tags.power) return "power";
   if (tags.railway) return "rail";
@@ -88,7 +106,7 @@ export async function GET(request: Request) {
           name: tags.name ?? tags["name:en"] ?? tags.operator ?? `${kind.charAt(0).toUpperCase()}${kind.slice(1)} feature`,
           latitude: point.lat,
           longitude: point.lon,
-          distanceKm: Number(distanceKm(lat, lng, point.lat, point.lon).toFixed(1)),
+          distanceKm: Number((element.geometry?.length ? distanceToGeometryKm(lat, lng, element.geometry) : distanceKm(lat, lng, point.lat, point.lon)).toFixed(1)),
           detail: detailFor(tags),
           geometry,
           infrastructureType: tags.power ?? tags.railway ?? tags.waterway ?? tags.landuse ?? tags.man_made ?? tags.natural ?? kind,

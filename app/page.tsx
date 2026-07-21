@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Layer, LayerGroup, Map as LeafletMap } from "leaflet";
 import type { CatalogSite } from "../lib/catalog";
+import type { DataSourceRecord } from "../lib/data-sources";
+import { analyzeSuitability, type ConstraintCode, type SuitabilityAnalysis } from "../lib/suitability";
 import "leaflet/dist/leaflet.css";
 
 type Locale = "ru" | "kk";
@@ -54,6 +56,9 @@ type AgroCellProps = {
   solar: number;
   industrial_land: number;
   best_crop: string;
+  power_km: number | null;
+  rail_km: number | null;
+  water_km: number | null;
 };
 
 type AgroFeature = { type: "Feature"; properties: AgroCellProps; geometry: object };
@@ -64,8 +69,26 @@ type AgroCollection = {
     method: string;
     limitations: string[];
     normalization_percentiles: Record<string, { p10: number; p90: number }>;
+    infrastructure?: { source: string; observed_at: string; counts: Record<string, number>; limitations: string };
   };
   features: AgroFeature[];
+};
+
+type RegionalInfrastructure = {
+  type: "FeatureCollection";
+  metadata: { observed_at?: string; counts?: Record<string, number> };
+  features: Array<{
+    type: "Feature";
+    properties: { kind: string; name?: string; voltage_kv?: number; detail?: string };
+    geometry: { type: "Point" | "LineString"; coordinates: [number, number] | Array<[number, number]> };
+  }>;
+};
+
+type ClimateContext = {
+  temperatureC: number | null;
+  precipitationMmDay: number | null;
+  solarKwhM2Day: number | null;
+  windMs: number | null;
 };
 
 type AiAdvice = {
@@ -248,10 +271,6 @@ const products: Record<Category, Array<{ id: string; ru: string; kk: string }>> 
   other: [],
 };
 
-function clamp(value: number) {
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
 function distanceBetween(lat1: number, lng1: number, lat2: number, lng2: number) {
   const radians = (value: number) => value * Math.PI / 180;
   const dLat = radians(lat2 - lat1);
@@ -285,34 +304,8 @@ function productName(profile: InvestorProfile, locale: Locale) {
   return option?.[locale] ?? (locale === "ru" ? "Новый проект" : "Жаңа жоба");
 }
 
-function normalized(value: number, key: string, data: AgroCollection) {
-  const range = data.metadata.normalization_percentiles[key];
-  if (!range || range.p90 <= range.p10) return 50;
-  return clamp(((value - range.p10) / (range.p90 - range.p10)) * 100);
-}
-
-function scoreCell(cell: AgroCellProps, profile: InvestorProfile, data: AgroCollection, sites: CatalogSite[]) {
-  const kind = productKind(profile);
-  const ndvi = normalized(cell.ndvi, "ndvi", data);
-  const ndwi = normalized(cell.ndwi, "ndwi", data);
-  const ndmi = normalized(cell.ndmi, "ndmi", data);
-  const ndbi = normalized(cell.ndbi, "ndbi", data);
-  const bsi = normalized(cell.bsi, "bsi", data);
-  const nearestSiteDistance = sites.length
-    ? Math.min(...sites.map((site) => distanceBetween(cell.latitude, cell.longitude, site.latitude, site.longitude)))
-    : 50;
-  const infrastructureProxy = clamp(100 - nearestSiteDistance * 2.1);
-
-  if (kind === "wheat") return clamp(ndvi * 0.4 + (100 - bsi) * 0.2 + (100 - Math.abs(ndmi - 48) * 1.4) * 0.2 + cell.confidence * 0.2);
-  if (kind === "soy") return clamp(cell.soy * 0.88 + infrastructureProxy * 0.12);
-  if (kind === "rice") return clamp(cell.rice * 0.82 + ndwi * 0.12 + infrastructureProxy * 0.06);
-  if (kind === "cotton") return clamp(cell.cotton * 0.86 + infrastructureProxy * 0.14);
-  if (kind === "vegetables") return clamp(cell.vegetables * 0.78 + ndwi * 0.1 + infrastructureProxy * 0.12);
-  if (kind === "solar") return clamp(cell.solar * 0.82 + infrastructureProxy * 0.18);
-  if (kind === "factory") return clamp(cell.industrial_land * 0.62 + infrastructureProxy * 0.38);
-  if (kind === "logistics") return clamp(cell.industrial_land * 0.48 + ndbi * 0.18 + infrastructureProxy * 0.34);
-  const agriculturalAverage = (cell.soy + cell.cotton + cell.vegetables) / 3;
-  return clamp(profile.category === "agriculture" ? agriculturalAverage * 0.82 + ndvi * 0.18 : cell.industrial_land * 0.55 + infrastructureProxy * 0.45);
+function scoreCell(cell: AgroCellProps, profile: InvestorProfile, data: AgroCollection) {
+  return analyzeSuitability(cell, profile, data.metadata).score;
 }
 
 function zoneClass(score: number) {
@@ -327,6 +320,31 @@ function zoneColor(score: number) {
   return "#c95f52";
 }
 
+function constraintLabel(code: ConstraintCode, locale: Locale, distanceKm?: number) {
+  const distance = distanceKm === undefined ? "" : ` · ${distanceKm.toFixed(1)} км`;
+  const ru: Record<ConstraintCode, string> = {
+    land_unverified: "Свободный участок и собственник ещё не подтверждены",
+    parcel_size_unverified: "Наличие единого участка нужного размера не подтверждено",
+    power_far: `Электросеть далеко для выбранной мощности${distance}`,
+    power_unknown: "Расстояние до электросети не определено",
+    water_far: `Река или канал далеко${distance}`,
+    water_unknown: "Ближайшая вода не определена",
+    rail_far: `Железная дорога далеко${distance}`,
+    rail_unknown: "Ближайшая железная дорога не определена",
+  };
+  const kk: Record<ConstraintCode, string> = {
+    land_unverified: "Бос телім мен меншік иесі әлі расталмаған",
+    parcel_size_unverified: "Қажетті көлемдегі біртұтас телім расталмаған",
+    power_far: `Таңдалған қуат үшін электр желісі алыс${distance}`,
+    power_unknown: "Электр желісіне дейінгі қашықтық анықталмаған",
+    water_far: `Өзен немесе канал алыс${distance}`,
+    water_unknown: "Ең жақын су нысаны анықталмаған",
+    rail_far: `Теміржол алыс${distance}`,
+    rail_unknown: "Ең жақын теміржол анықталмаған",
+  };
+  return (locale === "ru" ? ru : kk)[code];
+}
+
 export default function Home() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
@@ -334,6 +352,7 @@ export default function Home() {
   const agroLayerRef = useRef<LayerGroup | null>(null);
   const boundaryLayerRef = useRef<LayerGroup | null>(null);
   const siteLayerRef = useRef<LayerGroup | null>(null);
+  const regionalLayerRef = useRef<LayerGroup | null>(null);
   const liveLayerRef = useRef<LayerGroup | null>(null);
 
   const [locale, setLocale] = useState<Locale>("ru");
@@ -343,6 +362,8 @@ export default function Home() {
   const [analysisReady, setAnalysisReady] = useState(false);
   const [agroData, setAgroData] = useState<AgroCollection | null>(null);
   const [sites, setSites] = useState<CatalogSite[]>([]);
+  const [regionalInfrastructure, setRegionalInfrastructure] = useState<RegionalInfrastructure | null>(null);
+  const [sources, setSources] = useState<DataSourceRecord[]>([]);
   const [selectedCell, setSelectedCell] = useState<AgroCellProps | null>(null);
   const [mapStatus, setMapStatus] = useState<"loading" | "ready" | "error">("loading");
   const [liveFeatures, setLiveFeatures] = useState<LiveFeature[]>([]);
@@ -351,6 +372,8 @@ export default function Home() {
   const [visibleNetworks, setVisibleNetworks] = useState({ power: true, rail: true, water: true });
   const [aiAdvice, setAiAdvice] = useState<AiAdvice | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [climate, setClimate] = useState<ClimateContext | null>(null);
+  const [climateLoading, setClimateLoading] = useState(false);
 
   const t = text[locale];
   const currentProduct = productName(profile, locale);
@@ -358,14 +381,18 @@ export default function Home() {
   const rankedCells = useMemo(() => {
     if (!agroData || !analysisReady) return [];
     return agroData.features
-      .map((feature) => ({ cell: feature.properties, score: scoreCell(feature.properties, profile, agroData, sites) }))
+      .map((feature) => {
+        const analysis = analyzeSuitability(feature.properties, profile, agroData.metadata);
+        return { cell: feature.properties, score: analysis.score, analysis };
+      })
       .sort((a, b) => b.score - a.score);
-  }, [agroData, analysisReady, profile, sites]);
+  }, [agroData, analysisReady, profile]);
 
-  const selectedScore = useMemo(() => {
-    if (!selectedCell || !agroData) return 0;
-    return scoreCell(selectedCell, profile, agroData, sites);
-  }, [agroData, profile, selectedCell, sites]);
+  const selectedAnalysis = useMemo<SuitabilityAnalysis | null>(() => {
+    if (!selectedCell || !agroData) return null;
+    return analyzeSuitability(selectedCell, profile, agroData.metadata);
+  }, [agroData, profile, selectedCell]);
+  const selectedScore = selectedAnalysis?.score ?? 0;
 
   const nearestSite = useMemo(() => {
     if (!selectedCell || !sites.length) return null;
@@ -373,25 +400,24 @@ export default function Home() {
     return { site, distance: distanceBetween(selectedCell.latitude, selectedCell.longitude, site.latitude, site.longitude) };
   }, [selectedCell, sites]);
 
-  const nearestInfrastructure = useMemo(() => {
-    const nearest = (kind: LiveFeature["kind"]) => liveFeatures.filter((feature) => feature.kind === kind).sort((a, b) => a.distanceKm - b.distanceKm)[0];
-    return { power: nearest("power"), rail: nearest("rail"), water: nearest("water") };
-  }, [liveFeatures]);
-
   const networkCounts = useMemo(() => ({
-    power: liveFeatures.filter((feature) => feature.kind === "power").length,
+    power: (regionalInfrastructure?.metadata.counts?.power_line ?? regionalInfrastructure?.features.filter((feature) => feature.properties.kind === "power_line").length ?? 0),
     rail: liveFeatures.filter((feature) => feature.kind === "rail").length,
     water: liveFeatures.filter((feature) => feature.kind === "water").length,
-  }), [liveFeatures]);
+  }), [liveFeatures, regionalInfrastructure]);
 
   useEffect(() => {
     const controller = new AbortController();
     Promise.all([
       fetch("/data/agro-suitability.geojson", { signal: controller.signal }).then((response) => response.json() as Promise<AgroCollection>),
       fetch("/api/sites", { signal: controller.signal }).then((response) => response.json() as Promise<{ sites: CatalogSite[] }>),
-    ]).then(([agro, catalog]) => {
+      fetch("/data/region-infrastructure.geojson", { signal: controller.signal }).then((response) => response.json() as Promise<RegionalInfrastructure>),
+      fetch("/api/sources", { signal: controller.signal }).then((response) => response.json() as Promise<{ sources: DataSourceRecord[] }>),
+    ]).then(([agro, catalog, infrastructure, sourceCatalog]) => {
       setAgroData(agro);
       setSites(catalog.sites ?? []);
+      setRegionalInfrastructure(infrastructure);
+      setSources(sourceCatalog.sources ?? []);
     }).catch((error) => {
       if (!(error instanceof DOMException && error.name === "AbortError")) console.error("Regional data unavailable", error);
     });
@@ -412,6 +438,7 @@ export default function Home() {
         boundaryLayerRef.current = L.layerGroup().addTo(map);
         agroLayerRef.current = L.layerGroup().addTo(map);
         siteLayerRef.current = L.layerGroup().addTo(map);
+        regionalLayerRef.current = L.layerGroup().addTo(map);
         liveLayerRef.current = L.layerGroup().addTo(map);
         mapRef.current = map;
         window.setTimeout(() => map.invalidateSize(), 120);
@@ -458,7 +485,7 @@ export default function Home() {
     L.geoJSON(agroData as never, {
       style: (feature) => {
         const cell = (feature?.properties ?? {}) as AgroCellProps;
-        const score = scoreCell(cell, profile, agroData, sites);
+        const score = scoreCell(cell, profile, agroData);
         const active = selectedCell?.cell_id === cell.cell_id;
         return {
           color: active ? "#143f39" : "#ffffff",
@@ -470,13 +497,13 @@ export default function Home() {
       },
       onEachFeature: (feature, mapLayer: Layer) => {
         const cell = (feature.properties ?? {}) as AgroCellProps;
-        const score = scoreCell(cell, profile, agroData, sites);
+        const score = scoreCell(cell, profile, agroData);
         const level = score >= 75 ? t.excellent : score >= 55 ? t.possible : t.weak;
         mapLayer.bindTooltip(`<strong>${safeProduct}: ${score}/100</strong><br>${escapeHtml(level)}<br>${escapeHtml(t.clickHint)}`, { sticky: true });
         mapLayer.on("click", () => selectCell(cell));
       },
     }).addTo(layer);
-  }, [agroData, analysisReady, currentProduct, mapStatus, profile, selectCell, selectedCell?.cell_id, sites, t]);
+  }, [agroData, analysisReady, currentProduct, mapStatus, profile, selectCell, selectedCell?.cell_id, t]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -501,6 +528,31 @@ export default function Home() {
     });
   }, [locale, mapStatus, sites]);
 
+  useEffect(() => {
+    const L = leafletRef.current;
+    const layer = regionalLayerRef.current;
+    if (!L || !layer || !regionalInfrastructure || mapStatus !== "ready") return;
+    layer.clearLayers();
+    if (!visibleNetworks.power) return;
+    regionalInfrastructure.features.forEach((feature) => {
+      const geometry = feature.geometry;
+      const label = `${escapeHtml(feature.properties.name ?? (locale === "ru" ? "Объект электросети" : "Электр желісі нысаны"))}${feature.properties.voltage_kv ? ` · ${feature.properties.voltage_kv} kV` : ""}`;
+      if (geometry.type === "LineString") {
+        const coordinates = geometry.coordinates as Array<[number, number]>;
+        L.polyline(coordinates.map(([longitude, latitude]) => [latitude, longitude]), {
+          color: feature.properties.voltage_kv && feature.properties.voltage_kv >= 110 ? "#d97810" : "#eea13d",
+          weight: feature.properties.voltage_kv && feature.properties.voltage_kv >= 110 ? 2.5 : 1.4,
+          opacity: 0.76,
+        }).bindTooltip(label, { sticky: true }).addTo(layer);
+      } else {
+        const [longitude, latitude] = geometry.coordinates as [number, number];
+        L.circleMarker([latitude, longitude], { radius: 3.5, color: "#fff", weight: 1, fillColor: "#d97810", fillOpacity: 0.9 })
+          .bindTooltip(label)
+          .addTo(layer);
+      }
+    });
+  }, [locale, mapStatus, regionalInfrastructure, visibleNetworks.power]);
+
   const discoverInfrastructure = useCallback(async (cell: AgroCellProps) => {
     setLiveLoading(true);
     setDiscoveryCellId("");
@@ -524,6 +576,28 @@ export default function Home() {
   }, [analysisReady, discoverInfrastructure, selectedCell]);
 
   useEffect(() => {
+    if (!selectedCell || !analysisReady) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setClimateLoading(true);
+      setClimate(null);
+      try {
+        const params = new URLSearchParams({ lat: String(selectedCell.latitude), lon: String(selectedCell.longitude) });
+        const response = await fetch(`/api/climate?${params}`, { signal: controller.signal });
+        if (response.ok) {
+          const payload = await response.json() as { climate?: ClimateContext };
+          setClimate(payload.climate ?? null);
+        }
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setClimate(null);
+      } finally {
+        if (!controller.signal.aborted) setClimateLoading(false);
+      }
+    }, 300);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [analysisReady, selectedCell]);
+
+  useEffect(() => {
     const L = leafletRef.current;
     const layer = liveLayerRef.current;
     if (!L || !layer || mapStatus !== "ready") return;
@@ -545,11 +619,12 @@ export default function Home() {
 
   useEffect(() => {
     if (!analysisReady || !rankedCells.length || selectedCell) return;
-    selectCell(rankedCells[0].cell, true);
+    const timer = window.setTimeout(() => selectCell(rankedCells[0].cell, true), 0);
+    return () => window.clearTimeout(timer);
   }, [analysisReady, rankedCells, selectCell, selectedCell]);
 
   useEffect(() => {
-    if (!selectedCell || !analysisReady || discoveryCellId !== selectedCell.cell_id || liveLoading) return;
+    if (!selectedCell || !selectedAnalysis || !analysisReady || discoveryCellId !== selectedCell.cell_id || liveLoading) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setAiLoading(true);
@@ -562,12 +637,9 @@ export default function Home() {
           body: JSON.stringify({
             locale,
             profile: { ...profile, product: productName(profile, locale), kind: productKind(profile) },
-            zone: { ...selectedCell, score: selectedScore },
-            infrastructure: {
-              powerKm: nearestInfrastructure.power?.distanceKm ?? null,
-              railKm: nearestInfrastructure.rail?.distanceKm ?? null,
-              waterKm: nearestInfrastructure.water?.distanceKm ?? null,
-            },
+            zone: { ...selectedCell, score: selectedScore, decisionConfidence: selectedAnalysis.confidence, constraints: selectedAnalysis.constraints },
+            infrastructure: selectedAnalysis.distances,
+            climate,
             nearbySite: nearestSite ? { name: nearestSite.site.name, distanceKm: Number(nearestSite.distance.toFixed(1)), ownershipStatus: nearestSite.site.ownershipStatus } : null,
           }),
         });
@@ -580,7 +652,7 @@ export default function Home() {
       }
     }, 350);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [analysisReady, discoveryCellId, liveLoading, locale, nearestInfrastructure, nearestSite, profile, selectedCell, selectedScore]);
+  }, [analysisReady, climate, discoveryCellId, liveLoading, locale, nearestSite, profile, selectedAnalysis, selectedCell, selectedScore]);
 
   function completeWizard() {
     setAnalysisReady(true);
@@ -601,11 +673,15 @@ export default function Home() {
   }
 
   function downloadBrief() {
-    if (!selectedCell || !aiAdvice) return;
+    if (!selectedCell || !selectedAnalysis || !aiAdvice) return;
     const content = [
       `ALPHA TURKISTAN — ${currentProduct}`,
       `${t.selectedZone}: ${selectedCell.cell_id} (${selectedCell.latitude.toFixed(4)}, ${selectedCell.longitude.toFixed(4)})`,
       `${locale === "ru" ? "Оценка" : "Баға"}: ${selectedScore}/100`,
+      `${locale === "ru" ? "Уверенность данных" : "Деректер сенімділігі"}: ${selectedAnalysis.confidence}/100`,
+      `${locale === "ru" ? "Электросеть" : "Электр желісі"}: ${selectedAnalysis.distances.powerKm ?? "?"} км`,
+      `${locale === "ru" ? "Вода/канал" : "Су/канал"}: ${selectedAnalysis.distances.waterKm ?? "?"} км`,
+      `${locale === "ru" ? "Железная дорога" : "Теміржол"}: ${selectedAnalysis.distances.railKm ?? "?"} км`,
       "",
       aiAdvice.summary,
       "",
@@ -618,6 +694,9 @@ export default function Home() {
       t.steps.toUpperCase(),
       ...aiAdvice.nextSteps.map((item, index) => `${index + 1}. ${item}`),
       "",
+      locale === "ru" ? "ОГРАНИЧЕНИЯ ДАННЫХ" : "ДЕРЕКТЕР ШЕКТЕУЛЕРІ",
+      ...selectedAnalysis.constraints.map((item) => `- ${constraintLabel(item.code, locale, item.distanceKm)}`),
+      "",
       t.dataNote,
     ].join("\n");
     const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
@@ -629,7 +708,8 @@ export default function Home() {
   }
 
   const category = profile.category ? categories.find((item) => item.id === profile.category) : null;
-  const goodZones = rankedCells.filter((item) => item.score >= 75).length;
+  const goodZones = rankedCells.filter((item) => item.analysis.status === "excellent").length;
+  const connectedSources = sources.filter((source) => source.status === "connected").length;
 
   return (
     <main className="app-shell">
@@ -656,9 +736,13 @@ export default function Home() {
               <div className="panel-divider" />
               <div className="section-heading"><div><span className="eyebrow">{t.bestZones}</span><strong>{goodZones} {t.zonesFound}</strong></div><small>{t.bestZonesHint}</small></div>
               <div className="top-zone-list">
-                {rankedCells.slice(0, 4).map((item, index) => <button type="button" key={item.cell.cell_id} className={selectedCell?.cell_id === item.cell.cell_id ? "active" : ""} onClick={() => selectCell(item.cell)}><span className="rank">{index + 1}</span><div><strong>{locale === "ru" ? "Зона" : "Аймақ"} {item.cell.cell_id}</strong><small>{item.cell.latitude.toFixed(3)}, {item.cell.longitude.toFixed(3)}</small></div><b>{item.score}</b></button>)}
+                {rankedCells.slice(0, 4).map((item, index) => <button type="button" key={item.cell.cell_id} className={selectedCell?.cell_id === item.cell.cell_id ? "active" : ""} onClick={() => selectCell(item.cell)}><span className="rank">{index + 1}</span><div><strong>{locale === "ru" ? "Зона" : "Аймақ"} {item.cell.cell_id}</strong><small>{item.analysis.constraints.some((constraint) => constraint.blocking) ? (locale === "ru" ? "Есть критическое условие" : "Маңызды шарт бар") : `${locale === "ru" ? "уверенность" : "сенімділік"} ${item.analysis.confidence}%`}</small></div><b>{item.score}</b></button>)}
               </div>
               <div className="data-source"><span>◎</span><p><strong>{locale === "ru" ? "На чём основана карта" : "Карта неге негізделген"}</strong><small>{t.source}</small></p></div>
+              <details className="source-catalog">
+                <summary>{locale === "ru" ? `Источники данных: ${connectedSources} подключено / ${sources.length} изучено` : `Дереккөздер: ${connectedSources} қосылды / ${sources.length} зерттелді`}</summary>
+                <div>{sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span className={`source-status ${source.status}`} /> <strong>{source.title}</strong><small>{source.status === "connected" ? (locale === "ru" ? "используется сейчас" : "қазір қолданылады") : source.status === "credentials_required" ? (locale === "ru" ? "нужен API-ключ" : "API кілті қажет") : source.status === "offline_pipeline" ? (locale === "ru" ? "готово к офлайн-интеграции" : "офлайн біріктіруге дайын") : (locale === "ru" ? "официальная проверка" : "ресми тексеру")}</small></a>)}</div>
+              </details>
             </> : <p className="empty-copy">{t.wizardLead}</p>}
           </div>
         </aside>
@@ -677,9 +761,24 @@ export default function Home() {
 
         <aside className="advice-panel">
           <div className="advice-scroll">
-            {selectedCell && analysisReady ? <>
+            {selectedCell && selectedAnalysis && analysisReady ? <>
               <div className="zone-heading"><div><span className="eyebrow">{t.selectedZone} · {selectedCell.cell_id}</span><h2>{t.why}</h2><small>{selectedCell.latitude.toFixed(4)}, {selectedCell.longitude.toFixed(4)}</small></div><div className={`score-badge ${zoneClass(selectedScore)}`}><strong>{selectedScore}</strong><span>/100</span></div></div>
-              <div className={`plain-verdict ${zoneClass(selectedScore)}`}><strong>{selectedScore >= 75 ? t.excellent : selectedScore >= 55 ? t.possible : t.weak}</strong><span>{currentProduct}</span></div>
+              <div className={`plain-verdict ${selectedAnalysis.status}`}><strong>{selectedAnalysis.status === "excellent" ? t.excellent : selectedAnalysis.status === "possible" ? t.possible : t.weak}</strong><span>{locale === "ru" ? `уверенность ${selectedAnalysis.confidence}%` : `сенімділік ${selectedAnalysis.confidence}%`}</span></div>
+
+              <section className="score-breakdown">
+                <div className="breakdown-title"><h3>{locale === "ru" ? "Из чего состоит оценка" : "Баға неден тұрады"}</h3><small>alpha-suitability-v2</small></div>
+                {([
+                  [locale === "ru" ? "Земля и культура" : "Жер және дақыл", selectedAnalysis.components.landAndCrop],
+                  [t.power, selectedAnalysis.components.electricity],
+                  [t.water, selectedAnalysis.components.water],
+                  [locale === "ru" ? "Логистика" : "Логистика", selectedAnalysis.components.logistics],
+                ] as Array<[string, number]>).map(([label, value]) => <div className="score-component" key={label}><span>{label}</span><i><b style={{ width: `${value}%` }} /></i><strong>{value}</strong></div>)}
+              </section>
+
+              <section className="constraint-section">
+                <h3>{locale === "ru" ? "Что ограничивает вывод" : "Қорытындыны не шектейді"}</h3>
+                {selectedAnalysis.constraints.map((constraint) => <p className={constraint.blocking ? "blocking" : "caution"} key={constraint.code}><b>{constraint.blocking ? "!" : "i"}</b>{constraintLabel(constraint.code, locale, constraint.distanceKm)}</p>)}
+              </section>
               {aiLoading || !aiAdvice ? <div className="advice-loading"><span /><strong>{t.checking}</strong></div> : <>
                 <div className="ai-source"><span>✦</span><div><strong>{aiAdvice.title}</strong><small>{aiAdvice.provider === "groq" ? t.aiGroq : t.aiRules}</small></div></div>
                 <p className="advice-summary">{aiAdvice.summary}</p>
@@ -690,12 +789,17 @@ export default function Home() {
 
               <section className="facts-section">
                 <h3>{locale === "ru" ? "Что находится рядом" : "Жақын жерде не бар"}</h3>
-                <div className="fact-row"><span className="fact-icon power">⚡</span><div><small>{t.power}</small><strong>{nearestInfrastructure.power ? `${nearestInfrastructure.power.distanceKm} ${locale === "ru" ? "км" : "км"}` : locale === "ru" ? "Не найдено в радиусе 30 км" : "30 км радиуста табылмады"}</strong></div></div>
-                <div className="fact-row"><span className="fact-icon water">≈</span><div><small>{t.water}</small><strong>{nearestInfrastructure.water ? `${nearestInfrastructure.water.distanceKm} км` : locale === "ru" ? "Не найдено в радиусе 30 км" : "30 км радиуста табылмады"}</strong></div></div>
-                <div className="fact-row"><span className="fact-icon rail">═</span><div><small>{t.rail}</small><strong>{nearestInfrastructure.rail ? `${nearestInfrastructure.rail.distanceKm} км` : locale === "ru" ? "Не найдено в радиусе 30 км" : "30 км радиуста табылмады"}</strong></div></div>
+                <div className="fact-row"><span className="fact-icon power">⚡</span><div><small>{t.power}</small><strong>{selectedAnalysis.distances.powerKm !== null ? `${selectedAnalysis.distances.powerKm} км` : locale === "ru" ? "Нет данных" : "Дерек жоқ"}</strong><em>{locale === "ru" ? "до нанесённой линии/подстанции; мощность не подтверждена" : "картадағы желіге/қосалқы станцияға дейін; қуат расталмаған"}</em></div></div>
+                <div className="fact-row"><span className="fact-icon water">≈</span><div><small>{t.water}</small><strong>{selectedAnalysis.distances.waterKm !== null ? `${selectedAnalysis.distances.waterKm} км` : locale === "ru" ? "Нет данных" : "Дерек жоқ"}</strong><em>{locale === "ru" ? "до нанесённой реки/канала; расход и право не подтверждены" : "картадағы өзенге/каналға дейін; шығын мен құқық расталмаған"}</em></div></div>
+                <div className="fact-row"><span className="fact-icon rail">═</span><div><small>{t.rail}</small><strong>{selectedAnalysis.distances.railKm !== null ? `${selectedAnalysis.distances.railKm} км` : locale === "ru" ? "Нет данных" : "Дерек жоқ"}</strong><em>{locale === "ru" ? "до нанесённой железнодорожной линии" : "картадағы теміржол желісіне дейін"}</em></div></div>
               </section>
 
-              <section className="ownership-section"><h3>{t.ownership}</h3><div><span>▱</span><p><strong>{t.ownershipUnknown}</strong>{nearestSite && <small>{t.nearbySite}: {nearestSite.site.name} · {nearestSite.distance.toFixed(1)} км</small>}</p></div><a href="https://map.gov4c.kz/egkn/" target="_blank" rel="noreferrer">{t.cadastral}</a></section>
+              <section className="climate-section">
+                <div><h3>{locale === "ru" ? "Климатический фон" : "Климаттық жағдай"}</h3><a href="https://power.larc.nasa.gov/docs/services/api/temporal/climatology/" target="_blank" rel="noreferrer">NASA POWER ↗</a></div>
+                {climateLoading ? <p>{locale === "ru" ? "Загружаем климатологию…" : "Климатология жүктелуде…"}</p> : climate ? <div className="climate-grid"><span><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climate.temperatureC?.toFixed(1) ?? "—"} °C</strong></span><span><small>{locale === "ru" ? "Осадки" : "Жауын-шашын"}</small><strong>{climate.precipitationMmDay?.toFixed(1) ?? "—"} мм/сут</strong></span><span><small>{locale === "ru" ? "Солнце" : "Күн"}</small><strong>{climate.solarKwhM2Day?.toFixed(1) ?? "—"} кВт·ч/м²</strong></span><span><small>{locale === "ru" ? "Ветер 10 м" : "10 м жел"}</small><strong>{climate.windMs?.toFixed(1) ?? "—"} м/с</strong></span></div> : <p>{locale === "ru" ? "Сервис временно недоступен; оценка не подменена выдуманными значениями." : "Сервис уақытша қолжетімсіз; баға ойдан шығарылған мәндермен алмастырылмады."}</p>}
+              </section>
+
+              <section className="ownership-section"><h3>{t.ownership}</h3><div><span>▱</span><p><strong>{t.ownershipUnknown}</strong>{nearestSite && <small>{t.nearbySite}: {nearestSite.site.name} · {nearestSite.distance.toFixed(1)} км</small>}</p></div><a href="https://map.gov4c.kz/egkn/" target="_blank" rel="noreferrer">{t.cadastral}</a><a href="https://data.egov.kz/datasets/view?index=turkistan_oblysy_boiynsha_bos_" target="_blank" rel="noreferrer">{locale === "ru" ? "Открыть официальный список свободных земель ↗" : "Бос жерлердің ресми тізімін ашу ↗"}</a></section>
 
               <details className="technical-details"><summary>{t.indicators}</summary><div className="technical-grid"><div><span>NDVI · {t.vegetation}</span><strong>{selectedCell.ndvi.toFixed(3)}</strong></div><div><span>NDWI · {t.moisture}</span><strong>{selectedCell.ndwi.toFixed(3)}</strong></div><div><span>NDBI · {t.builtDry}</span><strong>{selectedCell.ndbi.toFixed(3)}</strong></div><div><span>{t.dataQuality}</span><strong>{selectedCell.confidence}%</strong></div></div></details>
               <p className="screening-note">{t.dataNote}</p>

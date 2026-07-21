@@ -79,8 +79,48 @@ test("investor advisor returns a plain-language fallback without a Groq key", as
   assert.equal(data.nextSteps.length, 3);
 });
 
-test("source includes project heatmap, Groq integration, storage and live infrastructure", async () => {
-  const [page, advisor, schema, discovery, hosting, packageJson, migration, agroRaw] = await Promise.all([
+test("suitability model applies infrastructure gates instead of painting every strong satellite cell green", async () => {
+  const metadata = { normalization_percentiles: { ndvi: { p10: 0, p90: 1 }, ndwi: { p10: -1, p90: 1 }, ndmi: { p10: -1, p90: 1 }, ndbi: { p10: -1, p90: 1 }, bsi: { p10: -1, p90: 1 } } };
+  const cell = { confidence: 96, area_km2: 324, ndvi: 0.75, ndwi: 0.35, ndmi: 0.25, ndbi: -0.2, bsi: -0.1, soy: 92, rice: 96, cotton: 88, vegetables: 90, solar: 75, industrial_land: 80, power_km: 3, rail_km: 8, water_km: 2 };
+  const profile = { category: "agriculture", productKey: "rice", customProduct: "", sizeHa: 100, powerNeed: "medium", waterNeed: true, railNeeded: false };
+  const goodResponse = await request("/api/suitability", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cell, profile, metadata }) });
+  assert.equal(goodResponse.status, 200);
+  const good = await goodResponse.json();
+  assert.equal(good.method, "alpha-suitability-v2");
+  assert.ok(good.score >= 75);
+  assert.equal(good.status, "excellent");
+
+  const weakResponse = await request("/api/suitability", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cell: { ...cell, power_km: 45, water_km: 35 }, profile, metadata }) });
+  const weak = await weakResponse.json();
+  assert.ok(weak.score <= 49);
+  assert.equal(weak.status, "weak");
+  assert.ok(weak.constraints.some((item) => item.code === "water_far" && item.blocking));
+  assert.ok(weak.constraints.some((item) => item.code === "power_far" && item.blocking));
+});
+
+test("data-source registry separates connected evidence from references and credentialed feeds", async () => {
+  const response = await request("/api/sources");
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.ok(data.sources.length >= 15);
+  assert.equal(new Set(data.sources.map((source) => source.id)).size, data.sources.length);
+  assert.ok(data.sources.every((source) => /^https:\/\//.test(source.url)));
+  assert.ok(data.sources.some((source) => source.id === "nasa-power" && source.status === "connected"));
+  assert.ok(data.sources.some((source) => source.id === "egov-free-land" && source.status === "credentials_required"));
+  assert.ok(data.sources.some((source) => source.id === "soilgrids" && source.status === "offline_pipeline"));
+});
+
+test("free-land endpoint never invents parcels when the official API key is absent", async () => {
+  const response = await request("/api/land/free");
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.deepEqual(data.records, []);
+  assert.equal(data.meta.status, "credentials_required");
+  assert.match(data.meta.sourceUrl, /^https:\/\/data\.egov\.kz\//);
+});
+
+test("source includes project heatmap, evidence registry, storage and regional infrastructure", async () => {
+  const [page, advisor, schema, discovery, hosting, packageJson, migration, agroRaw, infrastructureRaw, suitability] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/advisor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
@@ -89,6 +129,8 @@ test("source includes project heatmap, Groq integration, storage and live infras
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0000_modern_whirlwind.sql", import.meta.url), "utf8"),
     readFile(new URL("../public/data/agro-suitability.geojson", import.meta.url), "utf8"),
+    readFile(new URL("../public/data/region-infrastructure.geojson", import.meta.url), "utf8"),
+    readFile(new URL("../lib/suitability.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /import\("leaflet"\)/);
   assert.match(page, /tile\.openstreetmap\.org/);
@@ -97,7 +139,9 @@ test("source includes project heatmap, Groq integration, storage and live infras
   assert.match(page, /Проверить участок в кадастре/);
   assert.match(page, /Скачать краткое заключение/);
   assert.match(page, /function scoreCell/);
-  assert.match(page, /kind === "wheat"/);
+  assert.match(page, /analyzeSuitability/);
+  assert.match(page, /region-infrastructure\.geojson/);
+  assert.match(page, /score-breakdown/);
   assert.match(page, /Өндіріс/);
   assert.match(page, /Показать лучшие зоны/);
   assert.match(advisor, /GROQ_API_KEY/);
@@ -109,6 +153,7 @@ test("source includes project heatmap, Groq integration, storage and live infras
   assert.match(discovery, /line\|minor_line\|cable/);
   assert.match(discovery, /out tags geom/);
   assert.match(discovery, /out tags center 180/);
+  assert.match(discovery, /distanceToSegmentKm/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(packageJson, /"leaflet"/);
   assert.doesNotMatch(packageJson, /maplibre-gl|react-loading-skeleton/);
@@ -121,4 +166,13 @@ test("source includes project heatmap, Groq integration, storage and live infras
   assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.ndwi)));
   assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.ndbi)));
   assert.ok(agro.features.every((feature) => feature.properties.rice >= 0 && feature.properties.rice <= 100));
+  assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.power_km)));
+  assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.rail_km)));
+  assert.ok(agro.features.every((feature) => Number.isFinite(feature.properties.water_km)));
+  assert.equal(agro.metadata.infrastructure.source, "OpenStreetMap via Overpass API");
+  const infrastructure = JSON.parse(infrastructureRaw);
+  assert.ok(infrastructure.features.length >= 3000);
+  assert.ok(infrastructure.features.every((feature) => ["power_line", "substation", "power_source"].includes(feature.properties.kind)));
+  assert.match(suitability, /alpha-suitability-v2/);
+  assert.match(suitability, /water_far/);
 });

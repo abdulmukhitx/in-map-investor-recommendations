@@ -1,98 +1,61 @@
-# vinext-starter
+# Alpha Turkistan Investor Map
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Публичная русско-казахская система предварительного выбора локации для инвестора в Туркестанской области. Пользователь описывает проект, а карта ранжирует 402 зоны и объясняет простым языком, что подходит, что мешает и какие данные ещё нужно подтвердить.
 
-## Prerequisites
+## Что работает
 
-- Node.js `>=22.13.0`
+- мастер проекта: сельское хозяйство, производство, логистика, энергетика или свой вариант;
+- тепловая карта для пшеницы, риса, сои, хлопка, овощей, солнечной энергетики, фабрик и логистики;
+- индексы Alpha Turkistan Sentinel‑2: NDVI, NDWI, NDRE, NDMI, NDBI и BSI;
+- региональный слой нанесённых ЛЭП, подстанций и источников энергии;
+- расстояния от каждой аналитической зоны до электричества, железной дороги, рек и каналов, рассчитанные до геометрии линий, а не их центров;
+- модель `alpha-suitability-v2`: земля/культура, электричество, вода и логистика влияют на итоговый балл, а критические ограничения не позволяют показывать ложную зелёную рекомендацию;
+- климатический контекст NASA POWER для выбранной зоны;
+- живой поиск инфраструктуры, промышленных объектов и карьеров в радиусе 30 км через OpenStreetMap Overpass;
+- Groq AI при наличии серверного ключа и безопасное правиловое объяснение без ключа;
+- ссылки на публичный кадастр, официальный список свободных земель и каждый использованный или изученный источник;
+- скачиваемое заключение с ограничениями и шагами проверки.
 
-## Quick Start
+## Честные ограничения
+
+Карта — инструмент предварительного скрининга, а не юридическое или инвестиционное заключение. Нанесённая ЛЭП не подтверждает свободную мощность; река или канал не подтверждают расход и право водопользования; аналитическая ячейка не подтверждает границы, назначение или собственника конкретного участка. Эти проверки явно показаны инвестору.
+
+## Источники
+
+Реестр доступен через `/api/sources` и внутри интерфейса. Сейчас непосредственно подключены:
+
+- Alpha Turkistan Sentinel‑2 L2A 2025;
+- OpenStreetMap/Overpass для инфраструктуры;
+- NASA POWER Climatology API.
+
+Добавлены официальные маршруты проверки и подготовлены адаптеры для Open Data Kazakhstan, EGKN, KEGOC, QazIndustry, NSDI, Kazhydromet, Qazstat, FAO GAEZ, SoilGrids, ESA WorldCover, Copernicus DEM, Global Wind Atlas и государственного реестра недропользования. Источники, которым нужен ключ, лицензированная выгрузка или офлайн-обработка, не выдают выдуманные значения.
+
+## Локальный запуск
 
 ```bash
 npm install
 npm run dev
-npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+Проверка:
 
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm test
+npm run lint
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+Опциональные серверные переменные перечислены в `.env.example`:
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+- `GROQ_API_KEY` — объяснения Groq;
+- `GROQ_MODEL` — модель Groq;
+- `EGOV_API_KEY` — официальный API списка свободных земель.
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+## Обновление инфраструктурного снимка
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+```bash
+python scripts/fetch-region-infrastructure.py --boundary public/data/turkistan-boundary.geojson --output public/data/region-infrastructure.geojson
+python scripts/enrich-agro-infrastructure.py
+python scripts/compact-infrastructure.py
+```
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
-
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
-
-## Useful Commands
-
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
-
-## Learn More
-
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+Сначала сохраняется полный снимок, затем расстояния записываются в аналитические ячейки, после чего браузерный слой уменьшается до электросети для быстрой загрузки.

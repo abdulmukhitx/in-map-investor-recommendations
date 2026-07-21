@@ -214,8 +214,8 @@ export const seedSites: CatalogSite[] = [
     powerMw: null,
     hasRail: false,
     description: "A regional industrial-zone candidate close to irrigated agriculture and the Shardara reservoir. The zone appears in industrial-zone registries, but current land and utility availability require direct confirmation.",
-    sourceTitle: "QazIndustry · Industrial zones presentation",
-    sourceUrl: "https://qazindustry.gov.kz/docs/sez/Presentation-SEZ-eng.pdf",
+    sourceTitle: "QazIndustry · Current industrial zones registry",
+    sourceUrl: "https://sez.qazindustry.gov.kz/ru/report/iz",
     sourceCheckedAt: "2026-07-21",
     infrastructure: [
       { key: "water", label: "Water context", value: "Reservoir and irrigation network nearby", confirmed: false },
@@ -250,8 +250,8 @@ export const seedSites: CatalogSite[] = [
     powerMw: null,
     hasRail: true,
     description: "A high-feedstock agro-processing location in the cotton-growing south. The platform treats it as a candidate until the operator supplies a current parcel schedule and cadastral evidence.",
-    sourceTitle: "Invest in South Kazakhstan · Industrial zones",
-    sourceUrl: "https://shymkent.invest.gov.kz/doing-business-here/special-economic-zone/",
+    sourceTitle: "QazIndustry · Current industrial zones registry",
+    sourceUrl: "https://sez.qazindustry.gov.kz/ru/report/iz",
     sourceCheckedAt: "2026-07-21",
     infrastructure: [
       { key: "rail", label: "Rail", value: "Zhetisay-area rail access · verify live", confirmed: false },
@@ -342,4 +342,3 @@ export function rankForProject(site: CatalogSite, need: ProjectNeed) {
   if (site.evidenceLevel === "official") score += 3;
   return { score: Math.max(0, Math.min(100, score)), reasons: reasons.slice(0, 4) };
 }
-

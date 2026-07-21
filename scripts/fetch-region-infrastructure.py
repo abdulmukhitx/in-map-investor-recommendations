@@ -14,18 +14,16 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shapely.geometry import LineString, Point, Polygon, mapping, shape
-
-
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 )
 
 
 def request_overpass(query: str) -> dict:
     body = urllib.parse.urlencode({"data": query}).encode("utf-8")
-    last_error: Exception | None = None
+    errors: list[str] = []
     for endpoint in OVERPASS_ENDPOINTS:
         try:
             request = urllib.request.Request(
@@ -39,8 +37,8 @@ def request_overpass(query: str) -> dict:
             with urllib.request.urlopen(request, timeout=120) as response:
                 return json.loads(response.read().decode("utf-8"))
         except Exception as error:  # pragma: no cover - depends on public service
-            last_error = error
-    raise RuntimeError(f"All Overpass endpoints failed: {last_error}")
+            errors.append(f"{endpoint}: {error}")
+    raise RuntimeError("All Overpass endpoints failed: " + " | ".join(errors))
 
 
 def voltage_kv(tags: dict[str, str]) -> float | None:
@@ -54,18 +52,24 @@ def voltage_kv(tags: dict[str, str]) -> float | None:
     return max(values) if values else None
 
 
-def element_geometry(element: dict):
-    points = [(item["lon"], item["lat"]) for item in element.get("geometry", []) if "lon" in item and "lat" in item]
+def element_geometry(element: dict) -> dict | None:
+    points = [[item["lon"], item["lat"]] for item in element.get("geometry", []) if "lon" in item and "lat" in item]
     if len(points) >= 2:
-        if points[0] == points[-1] and len(points) >= 4:
-            return Polygon(points)
-        return LineString(points)
+        return {"type": "LineString", "coordinates": points}
     center = element.get("center")
     if center:
-        return Point(center["lon"], center["lat"])
+        return {"type": "Point", "coordinates": [center["lon"], center["lat"]]}
     if "lat" in element and "lon" in element:
-        return Point(element["lon"], element["lat"])
+        return {"type": "Point", "coordinates": [element["lon"], element["lat"]]}
     return None
+
+
+def all_points(value):
+    if isinstance(value, list) and len(value) >= 2 and all(isinstance(item, (int, float)) for item in value[:2]):
+        yield float(value[0]), float(value[1])
+    elif isinstance(value, list):
+        for item in value:
+            yield from all_points(item)
 
 
 def main() -> None:
@@ -78,15 +82,27 @@ def main() -> None:
     args = parser.parse_args()
 
     boundary_data = json.loads(Path(args.boundary).read_text(encoding="utf-8"))
-    boundary = shape(boundary_data["features"][0]["geometry"])
-    west, south, east, north = boundary.bounds
+    boundary_points = list(all_points(boundary_data["features"][0]["geometry"]["coordinates"]))
+    west = min(point[0] for point in boundary_points)
+    east = max(point[0] for point in boundary_points)
+    south = min(point[1] for point in boundary_points)
+    north = max(point[1] for point in boundary_points)
     bbox = f"{south:.6f},{west:.6f},{north:.6f},{east:.6f}"
-    query = f"""[out:json][timeout:90];(
+    network_query = f"""[out:json][timeout:120];(
       way[\"power\"~\"line|minor_line|cable\"]({bbox});
       nwr[\"power\"~\"substation|plant|generator\"]({bbox});
       way[\"railway\"=\"rail\"]({bbox});
     );out tags center geom;"""
-    payload = request_overpass(query)
+    water_query = f"""[out:json][timeout:120];(
+      way[\"waterway\"~\"river|canal\"]({bbox});
+    );out tags center geom;"""
+    payload = request_overpass(network_query)
+    try:
+        water_payload = request_overpass(water_query)
+    except RuntimeError as error:  # keep the essential electricity layer usable
+        print(json.dumps({"warning": "water layer unavailable", "detail": str(error)}, ensure_ascii=False))
+        water_payload = {"elements": [], "osm3s": {}}
+    payload["elements"] = [*payload.get("elements", []), *water_payload.get("elements", [])]
 
     features: list[dict] = []
     counts: dict[str, int] = {}
@@ -94,6 +110,7 @@ def main() -> None:
         tags = element.get("tags") or {}
         power = tags.get("power")
         railway = tags.get("railway")
+        waterway = tags.get("waterway")
         if power in {"line", "minor_line", "cable"}:
             kind = "power_line"
         elif power == "substation":
@@ -102,17 +119,13 @@ def main() -> None:
             kind = "power_source"
         elif railway == "rail":
             kind = "rail"
+        elif waterway in {"river", "canal"}:
+            kind = "water"
         else:
             continue
 
         geometry = element_geometry(element)
-        if geometry is None or geometry.is_empty:
-            continue
-        if kind in {"power_line", "rail"}:
-            geometry = geometry.intersection(boundary)
-            if geometry.is_empty:
-                continue
-        elif not boundary.intersects(geometry):
+        if geometry is None:
             continue
 
         kv = voltage_kv(tags)
@@ -125,6 +138,7 @@ def main() -> None:
                 "substation": "Mapped substation",
                 "power_source": "Mapped power source",
                 "rail": "Rail line",
+                "water": "Mapped river or canal",
             })[kind]
         )
         counts[kind] = counts.get(kind, 0) + 1
@@ -137,10 +151,10 @@ def main() -> None:
                     "name": label,
                     "voltage_kv": kv,
                     "operator": tags.get("operator"),
-                    "detail": tags.get("substation") or tags.get("plant:source") or tags.get("cables") or railway or power,
+                    "detail": tags.get("substation") or tags.get("plant:source") or tags.get("cables") or railway or waterway or power,
                     "osm_url": f"https://www.openstreetmap.org/{element['type']}/{element['id']}",
                 },
-                "geometry": mapping(geometry.simplify(0.00015, preserve_topology=True)),
+                "geometry": geometry,
             }
         )
 
