@@ -8,6 +8,11 @@ function annual(parameters: Record<string, Record<string, number | string>>, key
   return Number.isFinite(value) && value > -900 ? value : null;
 }
 
+function annualSolarKwh(parameters: Record<string, Record<string, number | string>>) {
+  const valueMj = annual(parameters, "ALLSKY_SFC_SW_DWN");
+  return valueMj === null ? null : Number((valueMj / 3.6).toFixed(3));
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const lat = Number(url.searchParams.get("lat"));
@@ -34,12 +39,19 @@ export async function GET(request: Request) {
       climate: {
         temperatureC: annual(parameters, "T2M"),
         precipitationMmDay: annual(parameters, "PRECTOTCORR"),
-        solarKwhM2Day: annual(parameters, "ALLSKY_SFC_SW_DWN"),
+        solarKwhM2Day: annualSolarKwh(parameters),
         windMs: annual(parameters, "WS10M"),
       },
       meta: {
         source: "NASA POWER Climatology API",
         sourceUrl: "https://power.larc.nasa.gov/docs/services/api/temporal/climatology/",
+        period: "2001–2020 climatology",
+        units: {
+          temperatureC: "°C",
+          precipitationMmDay: "mm/day",
+          solarKwhM2Day: "kWh/m²/day",
+          windMs: "m/s",
+        },
         limitation: "Climatological context, not a local station measurement or forecast.",
       },
     }, { headers: { "Cache-Control": "public, max-age=604800, stale-while-revalidate=2592000" } });

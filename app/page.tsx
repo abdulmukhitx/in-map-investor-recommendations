@@ -119,6 +119,29 @@ type FreeLandPayload = {
   };
 };
 
+const localizedSourceTitles: Partial<Record<string, Record<Locale, string>>> = {
+  "alpha-sentinel-2025": {
+    ru: "Спутниковые индексы Alpha Turkistan",
+    kk: "Alpha Turkistan спутниктік индекстері",
+  },
+  "osm-overpass": {
+    ru: "Электричество, дороги и вода — OpenStreetMap",
+    kk: "Электр, жолдар және су — OpenStreetMap",
+  },
+  "nasa-power": {
+    ru: "Температура и осадки — NASA POWER",
+    kk: "Температура және жауын-шашын — NASA POWER",
+  },
+  "egov-free-land": {
+    ru: "Свободные земли — eGov",
+    kk: "Бос жерлер — eGov",
+  },
+};
+
+function localizedSourceTitle(source: DataSourceRecord, locale: Locale) {
+  return localizedSourceTitles[source.id]?.[locale] ?? source.title;
+}
+
 const initialProfile: InvestorProfile = {
   category: "",
   productKey: "",
@@ -762,7 +785,7 @@ export default function Home() {
               <div className="data-source"><span>◎</span><p><strong>{locale === "ru" ? "На чём основана карта" : "Карта неге негізделген"}</strong><small>{t.source}</small></p></div>
               <details className="source-catalog">
                 <summary>{locale === "ru" ? `Источники данных: ${connectedSources} подключено / ${sources.length} изучено` : `Дереккөздер: ${connectedSources} қосылды / ${sources.length} зерттелді`}</summary>
-                <div>{sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span className={`source-status ${source.status}`} /> <strong>{source.title}</strong><small>{source.status === "connected" ? (locale === "ru" ? "используется сейчас" : "қазір қолданылады") : source.status === "credentials_required" ? (locale === "ru" ? "нужен API-ключ" : "API кілті қажет") : source.status === "offline_pipeline" ? (locale === "ru" ? "готово к офлайн-интеграции" : "офлайн біріктіруге дайын") : (locale === "ru" ? "официальная проверка" : "ресми тексеру")}</small></a>)}</div>
+                <div>{sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noreferrer"><span className={`source-status ${source.status}`} /> <strong>{localizedSourceTitle(source, locale)}</strong><small>{source.status === "connected" ? (locale === "ru" ? "используется сейчас" : "қазір қолданылады") : source.status === "credentials_required" ? (locale === "ru" ? "нужен API-ключ" : "API кілті қажет") : source.status === "offline_pipeline" ? (locale === "ru" ? "готово к офлайн-интеграции" : "офлайн біріктіруге дайын") : (locale === "ru" ? "официальная проверка" : "ресми тексеру")}</small></a>)}</div>
               </details>
             </> : <p className="empty-copy">{t.wizardLead}</p>}
           </div>
@@ -785,6 +808,20 @@ export default function Home() {
             {selectedCell && selectedAnalysis && analysisReady ? <>
               <div className="zone-heading"><div><span className="eyebrow">{t.selectedZone} · {selectedCell.cell_id}</span><h2>{t.why}</h2><small>{selectedCell.latitude.toFixed(4)}, {selectedCell.longitude.toFixed(4)}</small></div><div className={`score-badge ${zoneClass(selectedScore)}`}><strong>{selectedScore}</strong><span>/100</span></div></div>
               <div className={`plain-verdict ${selectedAnalysis.status}`}><strong>{selectedAnalysis.status === "excellent" ? t.excellent : selectedAnalysis.status === "possible" ? t.possible : t.weak}</strong><span>{locale === "ru" ? `уверенность ${selectedAnalysis.confidence}%` : `сенімділік ${selectedAnalysis.confidence}%`}</span></div>
+
+              <section className="connected-data-overview">
+                <div className="connected-data-heading">
+                  <h3>{locale === "ru" ? "Подключённые данные" : "Қосылған деректер"}</h3>
+                  <span>{locale === "ru" ? "обновляются" : "жаңартылады"}</span>
+                </div>
+                <div className="connected-data-grid">
+                  <div className={`connected-data-item groq ${aiAdvice?.provider === "rules" ? "fallback" : ""}`}><i /><small>Groq AI</small><strong>{aiLoading ? (locale === "ru" ? "Проверяем…" : "Тексерілуде…") : aiAdvice?.provider === "groq" ? (locale === "ru" ? "Работает" : "Жұмыс істейді") : (locale === "ru" ? "Резервный режим" : "Қосалқы режим")}</strong></div>
+                  <div className={`connected-data-item egov ${freeLand?.meta.status ?? "loading"}`}><i /><small>eGov · {locale === "ru" ? "земли" : "жерлер"}</small><strong>{!freeLand ? (locale === "ru" ? "Загружаем…" : "Жүктелуде…") : freeLand.records.length ? `${freeLand.records.length} ${locale === "ru" ? "записей" : "жазба"}` : freeLand.meta.status === "credentials_required" ? (locale === "ru" ? "Нужен API-ключ" : "API кілті қажет") : freeLand.meta.status === "unavailable" ? (locale === "ru" ? "Нет ответа" : "Жауап жоқ") : (locale === "ru" ? "Подключён" : "Қосылды")}</strong></div>
+                  <div className={`connected-data-item climate ${!climateLoading && !climate ? "unavailable" : ""}`}><i /><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climateLoading ? "…" : climate?.temperatureC !== null && climate?.temperatureC !== undefined ? `${climate.temperatureC.toFixed(1)} °C` : "—"}</strong></div>
+                  <div className={`connected-data-item climate ${!climateLoading && !climate ? "unavailable" : ""}`}><i /><small>{locale === "ru" ? "Осадки" : "Жауын-шашын"}</small><strong>{climateLoading ? "…" : climate?.precipitationMmDay !== null && climate?.precipitationMmDay !== undefined ? `${climate.precipitationMmDay.toFixed(1)} ${locale === "ru" ? "мм/сут" : "мм/тәул"}` : "—"}</strong></div>
+                </div>
+                <p>{locale === "ru" ? "Климат: NASA POWER, средние значения 2001–2020 (не прогноз)." : "Климат: NASA POWER, 2001–2020 орташа мәндері (болжам емес)."}</p>
+              </section>
 
               <section className="score-breakdown">
                 <div className="breakdown-title"><h3>{locale === "ru" ? "Из чего состоит оценка" : "Баға неден тұрады"}</h3><small>alpha-suitability-v2</small></div>
@@ -817,7 +854,8 @@ export default function Home() {
 
               <section className="climate-section">
                 <div><h3>{locale === "ru" ? "Климатический фон" : "Климаттық жағдай"}</h3><a href="https://power.larc.nasa.gov/docs/services/api/temporal/climatology/" target="_blank" rel="noreferrer">NASA POWER ↗</a></div>
-                {climateLoading ? <p>{locale === "ru" ? "Загружаем климатологию…" : "Климатология жүктелуде…"}</p> : climate ? <div className="climate-grid"><span><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climate.temperatureC?.toFixed(1) ?? "—"} °C</strong></span><span><small>{locale === "ru" ? "Осадки" : "Жауын-шашын"}</small><strong>{climate.precipitationMmDay?.toFixed(1) ?? "—"} мм/сут</strong></span><span><small>{locale === "ru" ? "Солнце" : "Күн"}</small><strong>{climate.solarKwhM2Day?.toFixed(1) ?? "—"} кВт·ч/м²</strong></span><span><small>{locale === "ru" ? "Ветер 10 м" : "10 м жел"}</small><strong>{climate.windMs?.toFixed(1) ?? "—"} м/с</strong></span></div> : <p>{locale === "ru" ? "Сервис временно недоступен; оценка не подменена выдуманными значениями." : "Сервис уақытша қолжетімсіз; баға ойдан шығарылған мәндермен алмастырылмады."}</p>}
+                {climateLoading ? <p>{locale === "ru" ? "Загружаем климатологию…" : "Климатология жүктелуде…"}</p> : climate ? <div className="climate-grid"><span><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climate.temperatureC?.toFixed(1) ?? "—"} °C</strong></span><span><small>{locale === "ru" ? "Осадки" : "Жауын-шашын"}</small><strong>{climate.precipitationMmDay?.toFixed(1) ?? "—"} {locale === "ru" ? "мм/сут" : "мм/тәул"}</strong></span><span><small>{locale === "ru" ? "Солнце" : "Күн"}</small><strong>{climate.solarKwhM2Day?.toFixed(1) ?? "—"} {locale === "ru" ? "кВт·ч/м²/сут" : "кВт·сағ/м²/тәул"}</strong></span><span><small>{locale === "ru" ? "Ветер 10 м" : "10 м жел"}</small><strong>{climate.windMs?.toFixed(1) ?? "—"} м/с</strong></span></div> : <p>{locale === "ru" ? "Сервис временно недоступен; оценка не подменена выдуманными значениями." : "Сервис уақытша қолжетімсіз; баға ойдан шығарылған мәндермен алмастырылмады."}</p>}
+                <p>{locale === "ru" ? "Средние климатические значения за 2001–2020 годы, не прогноз погоды." : "2001–2020 жылдардағы орташа климаттық мәндер, ауа райы болжамы емес."}</p>
               </section>
 
               <section className="ownership-section">

@@ -168,6 +168,21 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .plain-verdict.possible { background: var(--amber-soft); color: #9b6800; }
 .plain-verdict.weak { background: var(--red-soft); color: var(--red); }
 
+.connected-data-overview { margin-top: 12px; padding: 12px; border: 1px solid #dfe8e4; border-radius: 12px; background: linear-gradient(145deg, #fbfdfc, #f2f7f5); }
+.connected-data-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.connected-data-heading h3 { margin: 0; font-size: 11px; }
+.connected-data-heading span { padding: 3px 6px; border-radius: 10px; background: #dff2e9; color: var(--green); font-size: 7px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
+.connected-data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
+.connected-data-item { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px 8px 8px 25px; border-radius: 9px; background: #fff; box-shadow: 0 1px 0 rgba(15, 27, 61, 0.04); }
+.connected-data-item i { position: absolute; left: 9px; top: 11px; width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(22, 131, 93, 0.1); }
+.connected-data-item.groq i { background: var(--brand-dark); box-shadow: 0 0 0 3px rgba(15, 27, 61, 0.1); }
+.connected-data-item.fallback i, .connected-data-item.credentials_required i { background: var(--amber); box-shadow: 0 0 0 3px rgba(228, 167, 46, 0.12); }
+.connected-data-item.climate i { background: var(--blue); box-shadow: 0 0 0 3px rgba(42, 139, 181, 0.1); }
+.connected-data-item.unavailable i { background: var(--red); box-shadow: 0 0 0 3px rgba(201, 95, 82, 0.1); }
+.connected-data-item small { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.connected-data-item strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.connected-data-overview > p { margin: 8px 0 0; color: var(--muted); font-size: 8px; line-height: 1.35; }
+
 .score-breakdown { margin-top: 16px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfb; }
 .breakdown-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .breakdown-title h3 { margin: 0; font-size: 11px; }
