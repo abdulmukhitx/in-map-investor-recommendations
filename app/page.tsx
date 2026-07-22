@@ -101,6 +101,24 @@ type AiAdvice = {
   model?: string;
 };
 
+type FreeLandPayload = {
+  records: Array<{
+    id: string;
+    district: string;
+    areaThousandHa: number | null;
+    description: string;
+  }>;
+  meta: {
+    status: "credentials_required" | "connected" | "connected_with_warning" | "unavailable";
+    version?: string;
+    historical?: boolean;
+    sourceUrl: string;
+    limitation: string;
+    warning?: { ru: string; kk: string };
+    error?: string;
+  };
+};
+
 const initialProfile: InvestorProfile = {
   category: "",
   productKey: "",
@@ -374,6 +392,7 @@ export default function Home() {
   const [aiLoading, setAiLoading] = useState(false);
   const [climate, setClimate] = useState<ClimateContext | null>(null);
   const [climateLoading, setClimateLoading] = useState(false);
+  const [freeLand, setFreeLand] = useState<FreeLandPayload | null>(null);
 
   const t = text[locale];
   const currentProduct = productName(profile, locale);
@@ -413,11 +432,13 @@ export default function Home() {
       fetch("/api/sites", { signal: controller.signal }).then((response) => response.json() as Promise<{ sites: CatalogSite[] }>),
       fetch("/data/region-infrastructure.geojson", { signal: controller.signal }).then((response) => response.json() as Promise<RegionalInfrastructure>),
       fetch("/api/sources", { signal: controller.signal }).then((response) => response.json() as Promise<{ sources: DataSourceRecord[] }>),
-    ]).then(([agro, catalog, infrastructure, sourceCatalog]) => {
+      fetch("/api/land/free", { signal: controller.signal }).then((response) => response.json() as Promise<FreeLandPayload>),
+    ]).then(([agro, catalog, infrastructure, sourceCatalog, freeLandPayload]) => {
       setAgroData(agro);
       setSites(catalog.sites ?? []);
       setRegionalInfrastructure(infrastructure);
       setSources(sourceCatalog.sources ?? []);
+      setFreeLand(freeLandPayload);
     }).catch((error) => {
       if (!(error instanceof DOMException && error.name === "AbortError")) console.error("Regional data unavailable", error);
     });
@@ -799,7 +820,29 @@ export default function Home() {
                 {climateLoading ? <p>{locale === "ru" ? "Загружаем климатологию…" : "Климатология жүктелуде…"}</p> : climate ? <div className="climate-grid"><span><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climate.temperatureC?.toFixed(1) ?? "—"} °C</strong></span><span><small>{locale === "ru" ? "Осадки" : "Жауын-шашын"}</small><strong>{climate.precipitationMmDay?.toFixed(1) ?? "—"} мм/сут</strong></span><span><small>{locale === "ru" ? "Солнце" : "Күн"}</small><strong>{climate.solarKwhM2Day?.toFixed(1) ?? "—"} кВт·ч/м²</strong></span><span><small>{locale === "ru" ? "Ветер 10 м" : "10 м жел"}</small><strong>{climate.windMs?.toFixed(1) ?? "—"} м/с</strong></span></div> : <p>{locale === "ru" ? "Сервис временно недоступен; оценка не подменена выдуманными значениями." : "Сервис уақытша қолжетімсіз; баға ойдан шығарылған мәндермен алмастырылмады."}</p>}
               </section>
 
-              <section className="ownership-section"><h3>{t.ownership}</h3><div><span>▱</span><p><strong>{t.ownershipUnknown}</strong>{nearestSite && <small>{t.nearbySite}: {nearestSite.site.name} · {nearestSite.distance.toFixed(1)} км</small>}</p></div><a href="https://map.gov4c.kz/egkn/" target="_blank" rel="noreferrer">{t.cadastral}</a><a href="https://data.egov.kz/datasets/view?index=turkistan_oblysy_boiynsha_bos_" target="_blank" rel="noreferrer">{locale === "ru" ? "Открыть официальный список свободных земель ↗" : "Бос жерлердің ресми тізімін ашу ↗"}</a></section>
+              <section className="ownership-section">
+                <h3>{t.ownership}</h3>
+                <div><span>▱</span><p><strong>{t.ownershipUnknown}</strong>{nearestSite && <small>{t.nearbySite}: {nearestSite.site.name} · {nearestSite.distance.toFixed(1)} км</small>}</p></div>
+                {freeLand ? <details className="free-land-data">
+                  <summary>
+                    <span className={`free-land-dot ${freeLand.meta.status}`} />
+                    {freeLand.records.length
+                      ? (locale === "ru" ? `eGov подключён · ${freeLand.records.length} районных записей` : `eGov қосылды · ${freeLand.records.length} аудандық жазба`)
+                      : (locale === "ru" ? "Статус официальных данных eGov" : "eGov ресми деректерінің күйі")}
+                  </summary>
+                  <div>
+                    {freeLand.meta.warning && <p className="free-land-warning">{freeLand.meta.warning[locale]}</p>}
+                    {freeLand.meta.status === "credentials_required" && <p className="free-land-empty">{locale === "ru" ? "Для получения записей нужен серверный API-ключ eGov." : "Жазбаларды алу үшін серверлік eGov API кілті қажет."}</p>}
+                    {freeLand.meta.status === "unavailable" && <p className="free-land-empty">{locale === "ru" ? "Сервис eGov временно не ответил. Оценка зоны не подменяется выдуманными сведениями." : "eGov қызметі уақытша жауап бермеді. Аймақ бағасы ойдан шығарылған деректермен алмастырылмайды."}</p>}
+                    {freeLand.records.length > 0 && <div className="free-land-list">
+                      {freeLand.records.map((record) => <span key={record.id}><strong>{record.district}</strong><small>{record.areaThousandHa !== null ? `${record.areaThousandHa.toLocaleString(locale === "ru" ? "ru-RU" : "kk-KZ", { maximumFractionDigits: 2 })} ${locale === "ru" ? "тыс. га" : "мың га"}` : "—"}</small></span>)}
+                    </div>}
+                    <small className="free-land-limitation">{locale === "ru" ? "В наборе нет координат и кадастровых границ, поэтому эти записи нельзя честно показать точками на карте." : "Жинақта координаттар мен кадастрлық шекаралар жоқ, сондықтан бұл жазбаларды картада нүкте ретінде дұрыс көрсету мүмкін емес."}</small>
+                  </div>
+                </details> : <p className="free-land-loading">{locale === "ru" ? "Проверяем официальный источник eGov…" : "eGov ресми дереккөзі тексерілуде…"}</p>}
+                <a href="https://map.gov4c.kz/egkn/" target="_blank" rel="noreferrer">{t.cadastral}</a>
+                <a href="https://data.egov.kz/datasets/view?index=turkistan_oblysy_boiynsha_bos_" target="_blank" rel="noreferrer">{locale === "ru" ? "Открыть официальный список свободных земель ↗" : "Бос жерлердің ресми тізімін ашу ↗"}</a>
+              </section>
 
               <details className="technical-details"><summary>{t.indicators}</summary><div className="technical-grid"><div><span>NDVI · {t.vegetation}</span><strong>{selectedCell.ndvi.toFixed(3)}</strong></div><div><span>NDWI · {t.moisture}</span><strong>{selectedCell.ndwi.toFixed(3)}</strong></div><div><span>NDBI · {t.builtDry}</span><strong>{selectedCell.ndbi.toFixed(3)}</strong></div><div><span>{t.dataQuality}</span><strong>{selectedCell.confidence}%</strong></div></div></details>
               <p className="screening-note">{t.dataNote}</p>

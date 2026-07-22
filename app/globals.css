@@ -241,6 +241,19 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .ownership-section strong { font-size: 11px; }
 .ownership-section small { color: var(--muted); font-size: 9px; line-height: 1.4; }
 .ownership-section a { display: inline-block; margin-top: 9px; color: var(--brand); font-size: 11px; font-weight: 700; text-decoration: none; }
+.free-land-data { margin-top: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.free-land-data summary { display: flex; align-items: center; gap: 7px; padding: 10px; color: var(--ink); font-size: 10px; font-weight: 800; cursor: pointer; }
+.free-land-data > div { padding: 0 10px 11px; border-top: 1px solid var(--line); }
+.free-land-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--amber); }
+.free-land-dot.connected { background: var(--green); }
+.free-land-dot.unavailable { background: var(--red); }
+.free-land-warning { margin: 9px 0; padding: 8px; border-radius: 8px; background: var(--amber-soft); color: #745814; font-size: 8px; line-height: 1.45; }
+.free-land-empty, .free-land-loading { margin: 9px 0 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.free-land-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.free-land-list span { display: flex; flex-direction: column; gap: 2px; padding: 7px; border-radius: 8px; background: #f4f6f5; }
+.free-land-list strong { font-size: 9px; }
+.free-land-list small { color: var(--muted); font-size: 8px; }
+.free-land-limitation { display: block; margin-top: 9px; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .technical-details { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 13px; }
 .technical-details summary { color: var(--muted); font-size: 10px; cursor: pointer; }
 .technical-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
