@@ -120,8 +120,17 @@ test("free-land endpoint never invents parcels when the official API key is abse
   assert.match(data.meta.sourceUrl, /^https:\/\/data\.egov\.kz\//);
 });
 
+test("AlphaRank stays in transparent collection mode until verified labels exist", async () => {
+  const response = await request("/api/model/current");
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.status, "collecting");
+  assert.equal(data.minimumLabels, 40);
+  assert.equal(data.model, null);
+});
+
 test("source includes project heatmap, evidence registry, storage and regional infrastructure", async () => {
-  const [page, styles, advisor, schema, discovery, hosting, packageJson, migration, agroRaw, infrastructureRaw, suitability] = await Promise.all([
+  const [page, styles, advisor, schema, discovery, hosting, packageJson, migration, modelMigration, agroRaw, infrastructureRaw, suitability, alphaRank, modelLab, modelAuth] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/advisor/route.ts", import.meta.url), "utf8"),
@@ -130,9 +139,13 @@ test("source includes project heatmap, evidence registry, storage and regional i
     readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../drizzle/0000_modern_whirlwind.sql", import.meta.url), "utf8"),
+    readFile(new URL("../drizzle/0001_worried_mentallo.sql", import.meta.url), "utf8"),
     readFile(new URL("../public/data/agro-suitability.geojson", import.meta.url), "utf8"),
     readFile(new URL("../public/data/region-infrastructure.geojson", import.meta.url), "utf8"),
     readFile(new URL("../lib/suitability.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/alpha-rank.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/model-lab/model-lab-client.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/model-auth.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /import\("leaflet"\)/);
   assert.match(page, /tile\.openstreetmap\.org/);
@@ -148,6 +161,8 @@ test("source includes project heatmap, evidence registry, storage and regional i
   assert.match(page, /Показать лучшие зоны/);
   assert.match(page, /root\.style\.overflow = "hidden"/);
   assert.match(page, /scrollWheelZoom: !compactLayout/);
+  assert.match(page, /scoreWithAlphaRank/);
+  assert.match(page, /alpha-rank-v/);
   assert.match(styles, /\.advice-scroll \{ height: auto; flex: 1 1 auto; \}/);
   assert.match(styles, /max-height: calc\(100dvh - 48px\)/);
   assert.match(advisor, /GROQ_API_KEY/);
@@ -164,6 +179,8 @@ test("source includes project heatmap, evidence registry, storage and regional i
   assert.match(packageJson, /"leaflet"/);
   assert.doesNotMatch(packageJson, /maplibre-gl|react-loading-skeleton/);
   assert.match(migration, /CREATE TABLE `investment_sites`/);
+  assert.match(modelMigration, /CREATE TABLE `model_training_labels`/);
+  assert.match(modelMigration, /CREATE TABLE `model_versions`/);
   const agro = JSON.parse(agroRaw);
   assert.equal(agro.type, "FeatureCollection");
   assert.ok(agro.features.length >= 350);
@@ -181,4 +198,10 @@ test("source includes project heatmap, evidence registry, storage and regional i
   assert.ok(infrastructure.features.every((feature) => ["power_line", "substation", "power_source"].includes(feature.properties.kind)));
   assert.match(suitability, /alpha-suitability-v2/);
   assert.match(suitability, /water_far/);
+  assert.match(alphaRank, /pairwise-logistic-ranker/);
+  assert.match(alphaRank, /ALPHA_RANK_MINIMUM_LABELS = 40/);
+  assert.match(modelLab, /Итоговый балл намеренно скрыт/);
+  assert.match(modelLab, /\/api\/model\/feedback/);
+  assert.match(modelLab, /\/api\/model\/train/);
+  assert.match(modelAuth, /MODEL_EXPERT_EMAILS/);
 });

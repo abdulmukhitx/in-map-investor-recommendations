@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Layer, LayerGroup, Map as LeafletMap } from "leaflet";
 import type { CatalogSite } from "../lib/catalog";
 import type { DataSourceRecord } from "../lib/data-sources";
+import { scoreWithAlphaRank, statusForAlphaRankScore, type AlphaRankModel, type AlphaRankStatus } from "../lib/alpha-rank";
 import { analyzeSuitability, type ConstraintCode, type SuitabilityAnalysis } from "../lib/suitability";
 import "leaflet/dist/leaflet.css";
 
@@ -345,8 +346,8 @@ function productName(profile: InvestorProfile, locale: Locale) {
   return option?.[locale] ?? (locale === "ru" ? "Новый проект" : "Жаңа жоба");
 }
 
-function scoreCell(cell: AgroCellProps, profile: InvestorProfile, data: AgroCollection) {
-  return analyzeSuitability(cell, profile, data.metadata).score;
+function scoreCell(cell: AgroCellProps, profile: InvestorProfile, data: AgroCollection, model: AlphaRankModel | null) {
+  return scoreWithAlphaRank(analyzeSuitability(cell, profile, data.metadata), profile.category, model);
 }
 
 function zoneClass(score: number) {
@@ -416,9 +417,11 @@ export default function Home() {
   const [climate, setClimate] = useState<ClimateContext | null>(null);
   const [climateLoading, setClimateLoading] = useState(false);
   const [freeLand, setFreeLand] = useState<FreeLandPayload | null>(null);
+  const [alphaRankStatus, setAlphaRankStatus] = useState<AlphaRankStatus | null>(null);
 
   const t = text[locale];
   const currentProduct = productName(profile, locale);
+  const alphaRankModel = alphaRankStatus?.model ?? null;
 
   useEffect(() => {
     if (!wizardOpen) return;
@@ -444,16 +447,18 @@ export default function Home() {
     return agroData.features
       .map((feature) => {
         const analysis = analyzeSuitability(feature.properties, profile, agroData.metadata);
-        return { cell: feature.properties, score: analysis.score, analysis };
+        const score = scoreWithAlphaRank(analysis, profile.category, alphaRankModel);
+        return { cell: feature.properties, score, status: statusForAlphaRankScore(score, analysis), analysis };
       })
       .sort((a, b) => b.score - a.score);
-  }, [agroData, analysisReady, profile]);
+  }, [agroData, alphaRankModel, analysisReady, profile]);
 
   const selectedAnalysis = useMemo<SuitabilityAnalysis | null>(() => {
     if (!selectedCell || !agroData) return null;
     return analyzeSuitability(selectedCell, profile, agroData.metadata);
   }, [agroData, profile, selectedCell]);
-  const selectedScore = selectedAnalysis?.score ?? 0;
+  const selectedScore = selectedAnalysis ? scoreWithAlphaRank(selectedAnalysis, profile.category, alphaRankModel) : 0;
+  const selectedStatus = selectedAnalysis ? statusForAlphaRankScore(selectedScore, selectedAnalysis) : "weak";
 
   const nearestSite = useMemo(() => {
     if (!selectedCell || !sites.length) return null;
@@ -484,6 +489,17 @@ export default function Home() {
     }).catch((error) => {
       if (!(error instanceof DOMException && error.name === "AbortError")) console.error("Regional data unavailable", error);
     });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/model/current", { cache: "no-store", signal: controller.signal })
+      .then((response) => response.json() as Promise<AlphaRankStatus>)
+      .then(setAlphaRankStatus)
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setAlphaRankStatus(null);
+      });
     return () => controller.abort();
   }, []);
 
@@ -559,7 +575,7 @@ export default function Home() {
     L.geoJSON(agroData as never, {
       style: (feature) => {
         const cell = (feature?.properties ?? {}) as AgroCellProps;
-        const score = scoreCell(cell, profile, agroData);
+        const score = scoreCell(cell, profile, agroData, alphaRankModel);
         const active = selectedCell?.cell_id === cell.cell_id;
         return {
           color: active ? "#143f39" : "#ffffff",
@@ -571,13 +587,13 @@ export default function Home() {
       },
       onEachFeature: (feature, mapLayer: Layer) => {
         const cell = (feature.properties ?? {}) as AgroCellProps;
-        const score = scoreCell(cell, profile, agroData);
+        const score = scoreCell(cell, profile, agroData, alphaRankModel);
         const level = score >= 75 ? t.excellent : score >= 55 ? t.possible : t.weak;
         mapLayer.bindTooltip(`<strong>${safeProduct}: ${score}/100</strong><br>${escapeHtml(level)}<br>${escapeHtml(t.clickHint)}`, { sticky: true });
         mapLayer.on("click", () => selectCell(cell));
       },
     }).addTo(layer);
-  }, [agroData, analysisReady, currentProduct, mapStatus, profile, selectCell, selectedCell?.cell_id, t]);
+  }, [agroData, alphaRankModel, analysisReady, currentProduct, mapStatus, profile, selectCell, selectedCell?.cell_id, t]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -782,7 +798,7 @@ export default function Home() {
   }
 
   const category = profile.category ? categories.find((item) => item.id === profile.category) : null;
-  const goodZones = rankedCells.filter((item) => item.analysis.status === "excellent").length;
+  const goodZones = rankedCells.filter((item) => item.status === "excellent").length;
   const connectedSources = sources.filter((source) => source.status === "connected").length;
 
   return (
@@ -837,7 +853,7 @@ export default function Home() {
           <div className="advice-scroll">
             {selectedCell && selectedAnalysis && analysisReady ? <>
               <div className="zone-heading"><div><span className="eyebrow">{t.selectedZone} · {selectedCell.cell_id}</span><h2>{t.why}</h2><small>{selectedCell.latitude.toFixed(4)}, {selectedCell.longitude.toFixed(4)}</small></div><div className={`score-badge ${zoneClass(selectedScore)}`}><strong>{selectedScore}</strong><span>/100</span></div></div>
-              <div className={`plain-verdict ${selectedAnalysis.status}`}><strong>{selectedAnalysis.status === "excellent" ? t.excellent : selectedAnalysis.status === "possible" ? t.possible : t.weak}</strong><span>{locale === "ru" ? `уверенность ${selectedAnalysis.confidence}%` : `сенімділік ${selectedAnalysis.confidence}%`}</span></div>
+              <div className={`plain-verdict ${selectedStatus}`}><strong>{selectedStatus === "excellent" ? t.excellent : selectedStatus === "possible" ? t.possible : t.weak}</strong><span>{locale === "ru" ? `уверенность ${selectedAnalysis.confidence}%` : `сенімділік ${selectedAnalysis.confidence}%`}</span></div>
 
               <section className="connected-data-overview">
                 <div className="connected-data-heading">
@@ -845,6 +861,7 @@ export default function Home() {
                   <span>{locale === "ru" ? "обновляются" : "жаңартылады"}</span>
                 </div>
                 <div className="connected-data-grid">
+                  <div className={`connected-data-item ${alphaRankModel ? "" : "fallback"}`}><i /><small>AlphaRank</small><strong>{alphaRankModel ? `v${alphaRankModel.version} · ${alphaRankModel.labelCount}` : locale === "ru" ? `Сбор примеров ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}` : `Мысал жинау ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}`}</strong></div>
                   <div className={`connected-data-item groq ${aiAdvice?.provider === "rules" ? "fallback" : ""}`}><i /><small>Groq AI</small><strong>{aiLoading ? (locale === "ru" ? "Проверяем…" : "Тексерілуде…") : aiAdvice?.provider === "groq" ? (locale === "ru" ? "Работает" : "Жұмыс істейді") : (locale === "ru" ? "Резервный режим" : "Қосалқы режим")}</strong></div>
                   <div className={`connected-data-item egov ${freeLand?.meta.status ?? "loading"}`}><i /><small>eGov · {locale === "ru" ? "земли" : "жерлер"}</small><strong>{!freeLand ? (locale === "ru" ? "Загружаем…" : "Жүктелуде…") : freeLand.records.length ? `${freeLand.records.length} ${locale === "ru" ? "записей" : "жазба"}` : freeLand.meta.status === "credentials_required" ? (locale === "ru" ? "Нужен API-ключ" : "API кілті қажет") : freeLand.meta.status === "unavailable" ? (locale === "ru" ? "Нет ответа" : "Жауап жоқ") : (locale === "ru" ? "Подключён" : "Қосылды")}</strong></div>
                   <div className={`connected-data-item climate ${!climateLoading && !climate ? "unavailable" : ""}`}><i /><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climateLoading ? "…" : climate?.temperatureC !== null && climate?.temperatureC !== undefined ? `${climate.temperatureC.toFixed(1)} °C` : "—"}</strong></div>
@@ -854,7 +871,7 @@ export default function Home() {
               </section>
 
               <section className="score-breakdown">
-                <div className="breakdown-title"><h3>{locale === "ru" ? "Из чего состоит оценка" : "Баға неден тұрады"}</h3><small>alpha-suitability-v2</small></div>
+                <div className="breakdown-title"><h3>{locale === "ru" ? "Из чего состоит оценка" : "Баға неден тұрады"}</h3><small>{alphaRankModel ? `alpha-rank-v${alphaRankModel.version}` : "alpha-suitability-v2"}</small></div>
                 {([
                   [locale === "ru" ? "Земля и культура" : "Жер және дақыл", selectedAnalysis.components.landAndCrop],
                   [t.power, selectedAnalysis.components.electricity],

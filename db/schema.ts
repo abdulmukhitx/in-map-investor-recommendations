@@ -35,3 +35,44 @@ export const investmentSites = sqliteTable(
     index("investment_sites_score_idx").on(table.baseScore),
   ],
 );
+
+export const modelTrainingLabels = sqliteTable(
+  "model_training_labels",
+  {
+    id: text("id").primaryKey(),
+    expertEmail: text("expert_email").notNull(),
+    category: text("category").notNull(),
+    product: text("product").notNull(),
+    projectJson: text("project_json").notNull(),
+    leftCellId: text("left_cell_id").notNull(),
+    rightCellId: text("right_cell_id").notNull(),
+    leftFeaturesJson: text("left_features_json").notNull(),
+    rightFeaturesJson: text("right_features_json").notNull(),
+    winner: text("winner").notNull(),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("model_training_labels_category_idx").on(table.category),
+    index("model_training_labels_created_idx").on(table.createdAt),
+  ],
+);
+
+export const modelVersions = sqliteTable(
+  "model_versions",
+  {
+    id: text("id").primaryKey(),
+    version: integer("version").notNull().unique(),
+    status: text("status").notNull(),
+    method: text("method").notNull(),
+    weightsJson: text("weights_json").notNull(),
+    metricsJson: text("metrics_json").notNull(),
+    labelCount: integer("label_count").notNull(),
+    trainedByEmail: text("trained_by_email").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("model_versions_status_idx").on(table.status),
+    index("model_versions_created_idx").on(table.createdAt),
+  ],
+);
