@@ -69,10 +69,12 @@ button { color: inherit; }
 .edit-project { border: 0; border-radius: 9px; padding: 10px 14px; background: var(--brand); color: var(--brand-dark); font-size: 12px; font-weight: 800; cursor: pointer; box-shadow: 0 8px 22px rgba(200, 164, 78, 0.22); }
 
 .investor-workspace { height: calc(100vh - 70px); min-height: 610px; display: grid; grid-template-columns: 285px minmax(460px, 1fr) 365px; }
-.project-panel, .advice-panel { background: var(--panel); min-width: 0; position: relative; z-index: 10; }
+.project-panel, .advice-panel { min-width: 0; min-height: 0; overflow: hidden; background: var(--panel); position: relative; z-index: 10; }
 .project-panel { border-right: 1px solid var(--line); }
 .advice-panel { border-left: 1px solid var(--line); display: flex; flex-direction: column; }
-.panel-scroll, .advice-scroll { height: 100%; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #c9d3cf transparent; }
+.panel-scroll, .advice-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #c9d3cf transparent; }
+.panel-scroll { height: 100%; }
+.advice-scroll { height: auto; flex: 1 1 auto; }
 .panel-scroll { padding: 26px 20px 32px; }
 .advice-scroll { padding: 24px 22px 36px; }
 
@@ -282,8 +284,8 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .no-zone strong { margin-top: 12px; color: var(--ink); font: 700 18px/1.3 "Manrope", sans-serif; }
 .no-zone p { max-width: 250px; margin-top: 8px; font-size: 12px; line-height: 1.5; }
 
-.wizard-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(8, 14, 32, 0.84); backdrop-filter: blur(10px); }
-.wizard-card { width: min(760px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; padding: 24px; border: 1px solid rgba(200, 164, 78, 0.34); border-radius: 18px; background: #fff; box-shadow: var(--shadow); }
+.wizard-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: hidden; overscroll-behavior: none; padding: 24px; background: rgba(8, 14, 32, 0.84); backdrop-filter: blur(10px); }
+.wizard-card { width: min(760px, 100%); max-height: calc(100dvh - 48px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 24px; border: 1px solid rgba(200, 164, 78, 0.34); border-radius: 18px; background: #fff; box-shadow: var(--shadow); }
 .wizard-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .wizard-progress { display: flex; align-items: center; gap: 12px; margin: 25px 0 20px; }
 .wizard-progress span { flex: 0 0 auto; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -348,8 +350,8 @@ h1, h2 { font-family: "Manrope", sans-serif; }
   .topbar { grid-template-columns: 1fr auto; padding-inline: 16px; }
   .region { display: none; }
   .investor-workspace { height: auto; min-height: 0; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: 620px auto; }
-  .advice-panel { grid-column: 1 / -1; min-height: 500px; border-top: 1px solid var(--line); border-left: 0; }
-  .advice-scroll { overflow: visible; }
+  .advice-panel { grid-column: 1 / -1; min-height: 500px; overflow: visible; border-top: 1px solid var(--line); border-left: 0; }
+  .advice-scroll { height: auto; overflow: visible; }
   .download-brief { align-self: flex-start; min-width: 280px; }
 }
 
@@ -358,17 +360,17 @@ h1, h2 { font-family: "Manrope", sans-serif; }
   .brand small { display: none; }
   .edit-project { display: none; }
   .investor-workspace { display: flex; flex-direction: column; }
-  .project-panel { order: 2; border-right: 0; border-top: 1px solid var(--line); }
+  .project-panel { order: 2; overflow: visible; border-right: 0; border-top: 1px solid var(--line); }
   .map-stage { order: 1; height: 540px; }
   .advice-panel { order: 3; }
-  .panel-scroll { overflow: visible; }
+  .panel-scroll { height: auto; overflow: visible; }
   .map-project-title { top: 12px; left: 12px; right: 12px; max-width: none; }
   .network-controls { top: 91px; right: 12px; }
   .network-controls button { padding: 7px; font-size: 0; }
   .network-controls button b { font-size: 9px; }
   .map-legend { left: 12px; right: 12px; bottom: 12px; flex-wrap: wrap; gap: 7px 12px; }
   .wizard-overlay { align-items: stretch; padding: 0; }
-  .wizard-card { width: 100%; max-height: 100vh; min-height: 100vh; border-radius: 0; padding: 18px; }
+  .wizard-card { width: 100%; max-height: 100dvh; min-height: 100dvh; border-radius: 0; padding: 18px; }
   .wizard-copy h2 { font-size: 23px; }
   .category-grid, .needs-grid { grid-template-columns: 1fr; }
   .category-grid button:last-child { grid-column: auto; }

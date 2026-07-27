@@ -121,8 +121,9 @@ test("free-land endpoint never invents parcels when the official API key is abse
 });
 
 test("source includes project heatmap, evidence registry, storage and regional infrastructure", async () => {
-  const [page, advisor, schema, discovery, hosting, packageJson, migration, agroRaw, infrastructureRaw, suitability] = await Promise.all([
+  const [page, styles, advisor, schema, discovery, hosting, packageJson, migration, agroRaw, infrastructureRaw, suitability] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/advisor/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../db/schema.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/geo/discover/route.ts", import.meta.url), "utf8"),
@@ -145,6 +146,10 @@ test("source includes project heatmap, evidence registry, storage and regional i
   assert.match(page, /score-breakdown/);
   assert.match(page, /Өндіріс/);
   assert.match(page, /Показать лучшие зоны/);
+  assert.match(page, /root\.style\.overflow = "hidden"/);
+  assert.match(page, /scrollWheelZoom: !compactLayout/);
+  assert.match(styles, /\.advice-scroll \{ height: auto; flex: 1 1 auto; \}/);
+  assert.match(styles, /max-height: calc\(100dvh - 48px\)/);
   assert.match(advisor, /GROQ_API_KEY/);
   assert.match(advisor, /api\.groq\.com\/openai\/v1\/chat\/completions/);
   assert.match(advisor, /response_format/);

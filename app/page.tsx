@@ -420,6 +420,25 @@ export default function Home() {
   const t = text[locale];
   const currentProduct = productName(profile, locale);
 
+  useEffect(() => {
+    if (!wizardOpen) return;
+    const root = document.documentElement;
+    const previousRootOverflow = root.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousRootOverscroll = root.style.overscrollBehavior;
+    const previousBodyOverscroll = document.body.style.overscrollBehavior;
+    root.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    root.style.overscrollBehavior = "none";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      root.style.overflow = previousRootOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+      root.style.overscrollBehavior = previousRootOverscroll;
+      document.body.style.overscrollBehavior = previousBodyOverscroll;
+    };
+  }, [wizardOpen]);
+
   const rankedCells = useMemo(() => {
     if (!agroData || !analysisReady) return [];
     return agroData.features
@@ -476,7 +495,18 @@ export default function Home() {
         const L = await import("leaflet");
         if (!active || !mapContainer.current) return;
         leafletRef.current = L;
-        const map = L.map(mapContainer.current, { zoomControl: false, minZoom: 5, maxZoom: 16, preferCanvas: true }).setView([42.35, 68.55], 7);
+        const compactLayout = window.matchMedia("(max-width: 680px)").matches;
+        const map = L.map(mapContainer.current, {
+          zoomControl: false,
+          minZoom: 5,
+          maxZoom: 16,
+          preferCanvas: true,
+          scrollWheelZoom: !compactLayout,
+          dragging: !compactLayout,
+          touchZoom: !compactLayout,
+          doubleClickZoom: !compactLayout,
+          boxZoom: !compactLayout,
+        }).setView([42.35, 68.55], 7);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributors", crossOrigin: true }).addTo(map);
         L.control.zoom({ position: "bottomright" }).addTo(map);
         boundaryLayerRef.current = L.layerGroup().addTo(map);
