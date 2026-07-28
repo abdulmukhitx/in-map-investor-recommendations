@@ -64,6 +64,17 @@ function makePair(data: LabCollection, scenario: Scenario): [Candidate, Candidat
   return Math.random() > 0.5 ? [first, second] : [second, first];
 }
 
+function nextScenarioForBalance(
+  counts: AlphaRankStatus["categoryLabelCounts"],
+  currentScenarioId: string,
+) {
+  return [...scenarios].sort((left, right) => {
+    const countDifference = (counts[left.profile.category] ?? 0) - (counts[right.profile.category] ?? 0);
+    if (countDifference !== 0) return countDifference;
+    return Number(left.id === currentScenarioId) - Number(right.id === currentScenarioId);
+  })[0];
+}
+
 function distance(value: number | null) {
   return value === null ? "нет данных" : `${value.toFixed(1)} км`;
 }
@@ -161,9 +172,19 @@ export default function ModelLabClient({ expertName }: { expertName: string }) {
       setMessage(payload.error ?? "Не удалось сохранить выбор.");
       return;
     }
-    setStatus((current) => current ? { ...current, labelCount: payload.labelCount ?? current.labelCount } : current);
+    const nextCounts = {
+      ...(status?.categoryLabelCounts ?? {}),
+      [scenario.profile.category]: (status?.categoryLabelCounts?.[scenario.profile.category] ?? 0) + 1,
+    };
+    setStatus((current) => current ? {
+      ...current,
+      labelCount: payload.labelCount ?? current.labelCount,
+      categoryLabelCounts: nextCounts,
+    } : current);
     setMessage("Выбор сохранён как подтверждённый обучающий пример.");
-    refreshPair();
+    const nextScenario = nextScenarioForBalance(nextCounts, scenario.id);
+    setScenarioId(nextScenario.id);
+    refreshPair(data, nextScenario);
   }
 
   async function train() {
@@ -192,12 +213,12 @@ export default function ModelLabClient({ expertName }: { expertName: string }) {
       <section className="lab-status">
         <div><span>Подтверждённые сравнения</span><strong>{status?.labelCount ?? 0} / {status?.minimumLabels ?? 40}</strong></div>
         <i><b style={{ width: `${progress}%` }} /></i>
-        <p>{status?.model ? `Активна AlphaRank v${status.model.version} · точность проверки ${status.model.validationAccuracy}%` : "Сейчас карта использует резервную прозрачную формулу. После достаточного количества меток можно обучить первую собственную модель."}</p>
+        <p>{status?.model ? `Активна AlphaRank Hybrid · ${status.model.labelCount} примеров · точность проверки ${status.model.validationAccuracy}%` : "Сейчас карта использует резервную прозрачную формулу. После достаточного количества меток можно обучить первую собственную модель."}</p>
         <button type="button" disabled={saving || !status || status.labelCount < status.minimumLabels} onClick={train}>Обучить и включить новую версию</button>
       </section>
 
       <section className="lab-controls">
-        <label><span>Сценарий проекта</span><select value={scenarioId} onChange={(event) => changeScenario(event.target.value)}>{scenarios.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
+        <label><span>Сценарий проекта · число примеров отрасли</span><select value={scenarioId} onChange={(event) => changeScenario(event.target.value)}>{scenarios.map((item) => <option value={item.id} key={item.id}>{item.label} · {status?.categoryLabelCounts?.[item.profile.category] ?? 0}</option>)}</select></label>
         <label><span>Комментарий эксперта — необязательно</span><input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} placeholder="Например: здесь подтверждена вода или есть ограничение…" /></label>
       </section>
 
@@ -210,8 +231,7 @@ export default function ModelLabClient({ expertName }: { expertName: string }) {
       </section> : <div className="lab-loading">Загружаем пары зон…</div>}
 
       <div className="lab-footer-actions"><button type="button" onClick={() => refreshPair()} disabled={saving || !data}>Пропустить: недостаточно информации</button><span>{message}</span></div>
-      <details className="lab-method"><summary>Какие признаки получает модель</summary><p>{ALPHA_RANK_FEATURES.join(" · ")}. Кадастровые и критические инфраструктурные ограничения остаются обязательными правилами и не отменяются обучением.</p></details>
+      <details className="lab-method"><summary>Как работает AlphaRank Hybrid</summary><p>{ALPHA_RANK_FEATURES.join(" · ")}. Модель обучается отдельно для каждой отрасли, осторожно смешивает экспертные сравнения с проверенной базовой формулой и не переносит сельскохозяйственные предпочтения на заводы. Кадастровые и критические инфраструктурные ограничения остаются обязательными правилами.</p></details>
     </main>
   );
 }
-

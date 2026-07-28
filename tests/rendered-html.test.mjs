@@ -162,7 +162,7 @@ test("source includes project heatmap, evidence registry, storage and regional i
   assert.match(page, /root\.style\.overflow = "hidden"/);
   assert.match(page, /scrollWheelZoom: !compactLayout/);
   assert.match(page, /scoreWithAlphaRank/);
-  assert.match(page, /alpha-rank-v/);
+  assert.match(page, /alpha-rank-hybrid-v3/);
   assert.match(styles, /\.advice-scroll \{ height: auto; flex: 1 1 auto; \}/);
   assert.match(styles, /max-height: calc\(100dvh - 48px\)/);
   assert.match(advisor, /GROQ_API_KEY/);
@@ -199,6 +199,8 @@ test("source includes project heatmap, evidence registry, storage and regional i
   assert.match(suitability, /alpha-suitability-v2/);
   assert.match(suitability, /water_far/);
   assert.match(alphaRank, /pairwise-logistic-ranker/);
+  assert.match(alphaRank, /hybrid-pairwise-ranker-v3/);
+  assert.match(alphaRank, /ALPHA_RANK_CATEGORY_MINIMUM_LABELS = 30/);
   assert.match(alphaRank, /ALPHA_RANK_MINIMUM_LABELS = 40/);
   assert.match(modelLab, /Итоговый балл намеренно скрыт/);
   assert.match(modelLab, /\/api\/model\/feedback/);

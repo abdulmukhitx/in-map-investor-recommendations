@@ -861,7 +861,7 @@ export default function Home() {
                   <span>{locale === "ru" ? "обновляются" : "жаңартылады"}</span>
                 </div>
                 <div className="connected-data-grid">
-                  <div className={`connected-data-item ${alphaRankModel ? "" : "fallback"}`}><i /><small>AlphaRank</small><strong>{alphaRankModel ? `v${alphaRankModel.version} · ${alphaRankModel.labelCount}` : locale === "ru" ? `Сбор примеров ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}` : `Мысал жинау ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}`}</strong></div>
+                  <div className={`connected-data-item ${alphaRankModel ? "" : "fallback"}`}><i /><small>AlphaRank Hybrid</small><strong>{alphaRankModel ? `${alphaRankModel.labelCount} · Guard v3` : locale === "ru" ? `Сбор примеров ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}` : `Мысал жинау ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}`}</strong></div>
                   <div className={`connected-data-item groq ${aiAdvice?.provider === "rules" ? "fallback" : ""}`}><i /><small>Groq AI</small><strong>{aiLoading ? (locale === "ru" ? "Проверяем…" : "Тексерілуде…") : aiAdvice?.provider === "groq" ? (locale === "ru" ? "Работает" : "Жұмыс істейді") : (locale === "ru" ? "Резервный режим" : "Қосалқы режим")}</strong></div>
                   <div className={`connected-data-item egov ${freeLand?.meta.status ?? "loading"}`}><i /><small>eGov · {locale === "ru" ? "земли" : "жерлер"}</small><strong>{!freeLand ? (locale === "ru" ? "Загружаем…" : "Жүктелуде…") : freeLand.records.length ? `${freeLand.records.length} ${locale === "ru" ? "записей" : "жазба"}` : freeLand.meta.status === "credentials_required" ? (locale === "ru" ? "Нужен API-ключ" : "API кілті қажет") : freeLand.meta.status === "unavailable" ? (locale === "ru" ? "Нет ответа" : "Жауап жоқ") : (locale === "ru" ? "Подключён" : "Қосылды")}</strong></div>
                   <div className={`connected-data-item climate ${!climateLoading && !climate ? "unavailable" : ""}`}><i /><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climateLoading ? "…" : climate?.temperatureC !== null && climate?.temperatureC !== undefined ? `${climate.temperatureC.toFixed(1)} °C` : "—"}</strong></div>
@@ -871,7 +871,7 @@ export default function Home() {
               </section>
 
               <section className="score-breakdown">
-                <div className="breakdown-title"><h3>{locale === "ru" ? "Из чего состоит оценка" : "Баға неден тұрады"}</h3><small>{alphaRankModel ? `alpha-rank-v${alphaRankModel.version}` : "alpha-suitability-v2"}</small></div>
+                <div className="breakdown-title"><h3>{locale === "ru" ? "Из чего состоит оценка" : "Баға неден тұрады"}</h3><small>{alphaRankModel ? "alpha-rank-hybrid-v3" : "alpha-suitability-v2"}</small></div>
                 {([
                   [locale === "ru" ? "Земля и культура" : "Жер және дақыл", selectedAnalysis.components.landAndCrop],
                   [t.power, selectedAnalysis.components.electricity],

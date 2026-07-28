@@ -3,6 +3,8 @@ import { getDb } from "../db";
 import { modelTrainingLabels, modelVersions } from "../db/schema";
 import {
   ALPHA_RANK_MINIMUM_LABELS,
+  ALPHA_RANK_SERVING_METHOD,
+  type AlphaRankCategory,
   type AlphaRankFeatureVector,
   type AlphaRankModel,
   type AlphaRankStatus,
@@ -25,7 +27,7 @@ function rowToModel(row: typeof modelVersions.$inferSelect): AlphaRankModel | nu
   return {
     id: row.id,
     version: row.version,
-    method: "pairwise-logistic-ranker",
+    method: row.method === "hybrid-pairwise-ranker-v3" ? "hybrid-pairwise-ranker-v3" : "pairwise-logistic-ranker",
     labelCount: row.labelCount,
     validationAccuracy: metrics.validationAccuracy,
     trainedAt: row.createdAt.toISOString(),
@@ -38,12 +40,21 @@ export async function getAlphaRankStatus(): Promise<AlphaRankStatus> {
   try {
     const db = await getDb();
     const [{ total }] = await db.select({ total: count() }).from(modelTrainingLabels);
+    const categoryRows = await db
+      .select({ category: modelTrainingLabels.category, total: count() })
+      .from(modelTrainingLabels)
+      .groupBy(modelTrainingLabels.category);
+    const categoryLabelCounts = Object.fromEntries(
+      categoryRows.map((row) => [row.category, Number(row.total)]),
+    ) as Partial<Record<AlphaRankCategory, number>>;
     const [activeRow] = await db.select().from(modelVersions).where(eq(modelVersions.status, "active")).orderBy(desc(modelVersions.version)).limit(1);
     const model = activeRow ? rowToModel(activeRow) : null;
     return {
       status: model ? "active" : "collecting",
       labelCount: Number(total),
       minimumLabels: ALPHA_RANK_MINIMUM_LABELS,
+      categoryLabelCounts,
+      servingMethod: ALPHA_RANK_SERVING_METHOD,
       model,
     };
   } catch (error) {
@@ -51,6 +62,8 @@ export async function getAlphaRankStatus(): Promise<AlphaRankStatus> {
       status: "collecting",
       labelCount: 0,
       minimumLabels: ALPHA_RANK_MINIMUM_LABELS,
+      categoryLabelCounts: {},
+      servingMethod: ALPHA_RANK_SERVING_METHOD,
       model: null,
       warning: error instanceof Error ? error.message : "Model storage unavailable",
     };
@@ -88,4 +101,3 @@ export async function trainAndActivateAlphaRank(expertEmail: string) {
   });
   return model;
 }
-
