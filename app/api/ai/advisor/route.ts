@@ -20,6 +20,20 @@ type AdvisorRequest = {
   };
   infrastructure?: { powerKm?: number | null; railKm?: number | null; waterKm?: number | null };
   nearbySite?: { name?: string; distanceKm?: number; ownershipStatus?: string } | null;
+  nearbyEcosystem?: {
+    score?: number;
+    bonus?: number;
+    within50Km?: number;
+    items?: Array<{
+      kind?: "asset" | "company" | "project";
+      name?: string;
+      distanceKm?: number;
+      district?: string;
+      category?: string;
+      organization?: string | null;
+      locationPrecision?: "exact" | "linked_project" | "district";
+    }>;
+  } | null;
 };
 
 type Advice = {
@@ -50,6 +64,8 @@ function fallbackAdvice(body: AdvisorRequest): Advice {
   const railKm = finite(body.infrastructure?.railKm);
   const waterKm = finite(body.infrastructure?.waterKm);
   const confidence = finite(body.zone?.confidence) ?? 0;
+  const ecosystemItems = body.nearbyEcosystem?.items ?? [];
+  const ecosystemWithin50 = finite(body.nearbyEcosystem?.within50Km) ?? 0;
   const pluses: string[] = [];
   const minuses: string[] = [];
 
@@ -58,6 +74,9 @@ function fallbackAdvice(body: AdvisorRequest): Advice {
   if (powerKm !== null && powerKm <= 15) pluses.push(kk ? `Картадағы электр нысаны шамамен ${powerKm} км жерде.` : `Отмеченный на карте объект электросети находится примерно в ${powerKm} км.`);
   if (body.profile?.waterNeed && waterKm !== null && waterKm <= 15) pluses.push(kk ? `Су немесе канал нысаны шамамен ${waterKm} км жерде.` : `Водный объект или канал отмечен примерно в ${waterKm} км.`);
   if (body.profile?.railNeeded && railKm !== null && railKm <= 25) pluses.push(kk ? `Теміржол шамамен ${railKm} км жерде.` : `Железная дорога отмечена примерно в ${railKm} км.`);
+  if (ecosystemWithin50 > 0) pluses.push(kk
+    ? `50 км радиуста ${Math.round(ecosystemWithin50)} актив, компания немесе жоба табылды — оларды ықтимал іскерлік байланыс ретінде тексеруге болады.`
+    : `В радиусе 50 км найдено ${Math.round(ecosystemWithin50)} активов, компаний и проектов — их можно проверить как потенциальные деловые связи.`);
   if (confidence >= 90) pluses.push(kk ? "Спутниктік деректердің қамту сапасы жоғары." : "У спутниковых данных хорошее покрытие этой зоны.");
 
   if (score < 55) minuses.push(kk ? "Бастапқы деректер бұл жерді әлсіз нұсқа ретінде көрсетеді; жақсырақ аймақтарды салыстырған жөн." : "Исходные данные показывают слабую пригодность; стоит сравнить более сильные зоны.");
@@ -66,6 +85,13 @@ function fallbackAdvice(body: AdvisorRequest): Advice {
   if (body.profile?.railNeeded && (railKm === null || railKm > 25)) minuses.push(kk ? "Жобаға қажет жақын теміржол табылмады." : "Не найдена железная дорога достаточно близко для указанной потребности.");
   minuses.push(kk ? "Жер телімінің шекарасы, мақсаты және меншік иесі әлі кадастрмен расталмаған." : "Границы, назначение и собственник земли пока не подтверждены кадастром.");
 
+  const nextSteps = kk
+    ? ["Жер телімін кадастрдан және рұқсат етілген пайдалану түрін тексеру.", "Электр желісі операторынан қосылу қуаты мен құнын сұрату.", body.profile?.category === "agriculture" ? "Топырақтың тұздылығын, құрамын және суару мүмкіндігін зертханада тексеру." : "Жол, су, санитарлық аймақ және логистика бойынша техникалық тексеру жүргізу."]
+    : ["Проверить конкретный участок в кадастре и разрешённый вид использования.", "Запросить у сетевого оператора доступную мощность, стоимость и срок подключения.", body.profile?.category === "agriculture" ? "Сделать лабораторный анализ почвы, засоления и подтвердить возможность орошения." : "Проверить подъездную дорогу, воду, санитарные зоны и логистику."];
+  if (ecosystemItems.length) nextSteps.push(kk
+    ? `Ең жақын ${ecosystemItems.slice(0, 2).map((item) => item.name).filter(Boolean).join(" және ")} бойынша профильді, қуатты және серіктестікке дайындығын тікелей нақтылау.`
+    : `По ближайшим ${ecosystemItems.slice(0, 2).map((item) => item.name).filter(Boolean).join(" и ")} напрямую уточнить профиль, мощности и готовность к сотрудничеству.`);
+
   return {
     title: score >= 75 ? (kk ? "Бұл аймақты бірінші кезекте тексеріңіз" : "Эту зону стоит проверить первой") : score >= 55 ? (kk ? "Аймақ шартты түрде қолайлы" : "Зона подходит при выполнении условий") : (kk ? "Жақсырақ аймақты салыстырыңыз" : "Лучше сравнить с более сильной зоной"),
     summary: kk
@@ -73,9 +99,7 @@ function fallbackAdvice(body: AdvisorRequest): Advice {
       : `Предварительная оценка для проекта «${product}» — ${score}/100. Это не инвестиционное решение, а фильтр для быстрого выбора перспективных мест.`,
     pluses: pluses.slice(0, 4).length ? pluses.slice(0, 4) : [kk ? "Аймақ бойынша спутниктік және инфрақұрылымдық деректер бар." : "По зоне доступны спутниковые и инфраструктурные данные."],
     minuses: minuses.slice(0, 4),
-    nextSteps: kk
-      ? ["Жер телімін кадастрдан және рұқсат етілген пайдалану түрін тексеру.", "Электр желісі операторынан қосылу қуаты мен құнын сұрату.", body.profile?.category === "agriculture" ? "Топырақтың тұздылығын, құрамын және суару мүмкіндігін зертханада тексеру." : "Жол, су, санитарлық аймақ және логистика бойынша техникалық тексеру жүргізу."]
-      : ["Проверить конкретный участок в кадастре и разрешённый вид использования.", "Запросить у сетевого оператора доступную мощность, стоимость и срок подключения.", body.profile?.category === "agriculture" ? "Сделать лабораторный анализ почвы, засоления и подтвердить возможность орошения." : "Проверить подъездную дорогу, воду, санитарные зоны и логистику."],
+    nextSteps: nextSteps.slice(0, 4),
     provider: "rules",
   };
 }
@@ -99,6 +123,7 @@ export async function POST(request: Request) {
     zone: body.zone,
     mapped_infrastructure: body.infrastructure,
     nearby_investment_site: body.nearbySite,
+    nearby_business_ecosystem: body.nearbyEcosystem,
     baseline: fallback,
   };
 

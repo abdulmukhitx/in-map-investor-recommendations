@@ -5,6 +5,7 @@ import type { Layer, LayerGroup, Map as LeafletMap } from "leaflet";
 import type { CatalogSite } from "../lib/catalog";
 import type { DataSourceRecord } from "../lib/data-sources";
 import { scoreWithAlphaRank, statusForAlphaRankScore, type AlphaRankModel, type AlphaRankStatus } from "../lib/alpha-rank";
+import { analyzeEcosystem, applyEcosystemBonus, type EcosystemAnalysis, type EcosystemFeature, type EcosystemPayload } from "../lib/ecosystem";
 import { analyzeSuitability, type ConstraintCode, type SuitabilityAnalysis } from "../lib/suitability";
 import "leaflet/dist/leaflet.css";
 
@@ -346,8 +347,11 @@ function productName(profile: InvestorProfile, locale: Locale) {
   return option?.[locale] ?? (locale === "ru" ? "Новый проект" : "Жаңа жоба");
 }
 
-function scoreCell(cell: AgroCellProps, profile: InvestorProfile, data: AgroCollection, model: AlphaRankModel | null) {
-  return scoreWithAlphaRank(analyzeSuitability(cell, profile, data.metadata), profile.category, model);
+function scoreCell(cell: AgroCellProps, profile: InvestorProfile, data: AgroCollection, model: AlphaRankModel | null, ecosystemFeatures: EcosystemFeature[]) {
+  const analysis = analyzeSuitability(cell, profile, data.metadata);
+  const baseScore = scoreWithAlphaRank(analysis, profile.category, model);
+  const ecosystem = analyzeEcosystem(cell.latitude, cell.longitude, profile, ecosystemFeatures);
+  return applyEcosystemBonus(baseScore, ecosystem.bonus, analysis.constraints.some((constraint) => constraint.blocking));
 }
 
 function zoneClass(score: number) {
@@ -360,6 +364,20 @@ function zoneColor(score: number) {
   if (score >= 75) return "#16835d";
   if (score >= 55) return "#e4a72e";
   return "#c95f52";
+}
+
+function ecosystemKindLabel(kind: EcosystemFeature["kind"], locale: Locale) {
+  if (kind === "project") return locale === "ru" ? "Инвестпроект" : "Инвестжоба";
+  if (kind === "company") return locale === "ru" ? "Компания" : "Компания";
+  return locale === "ru" ? "Актив" : "Актив";
+}
+
+function formatInvestment(value: number | null, locale: Locale) {
+  if (value === null) return null;
+  const formatter = new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "kk-KZ", { maximumFractionDigits: 1 });
+  if (value >= 1_000_000_000) return `${formatter.format(value / 1_000_000_000)} ${locale === "ru" ? "млрд ₸" : "млрд ₸"}`;
+  if (value >= 1_000_000) return `${formatter.format(value / 1_000_000)} ${locale === "ru" ? "млн ₸" : "млн ₸"}`;
+  return `${formatter.format(value)} ₸`;
 }
 
 function constraintLabel(code: ConstraintCode, locale: Locale, distanceKm?: number) {
@@ -396,6 +414,7 @@ export default function Home() {
   const siteLayerRef = useRef<LayerGroup | null>(null);
   const regionalLayerRef = useRef<LayerGroup | null>(null);
   const liveLayerRef = useRef<LayerGroup | null>(null);
+  const ecosystemLayerRef = useRef<LayerGroup | null>(null);
 
   const [locale, setLocale] = useState<Locale>("ru");
   const [wizardOpen, setWizardOpen] = useState(true);
@@ -418,10 +437,14 @@ export default function Home() {
   const [climateLoading, setClimateLoading] = useState(false);
   const [freeLand, setFreeLand] = useState<FreeLandPayload | null>(null);
   const [alphaRankStatus, setAlphaRankStatus] = useState<AlphaRankStatus | null>(null);
+  const [ecosystem, setEcosystem] = useState<EcosystemPayload | null>(null);
+  const [ecosystemLoading, setEcosystemLoading] = useState(true);
+  const [ecosystemVisible, setEcosystemVisible] = useState(true);
 
   const t = text[locale];
   const currentProduct = productName(profile, locale);
   const alphaRankModel = alphaRankStatus?.model ?? null;
+  const ecosystemFeatures = useMemo(() => ecosystem?.features ?? [], [ecosystem]);
 
   useEffect(() => {
     if (!wizardOpen) return;
@@ -447,17 +470,25 @@ export default function Home() {
     return agroData.features
       .map((feature) => {
         const analysis = analyzeSuitability(feature.properties, profile, agroData.metadata);
-        const score = scoreWithAlphaRank(analysis, profile.category, alphaRankModel);
-        return { cell: feature.properties, score, status: statusForAlphaRankScore(score, analysis), analysis };
+        const ecosystemAnalysis = analyzeEcosystem(feature.properties.latitude, feature.properties.longitude, profile, ecosystemFeatures);
+        const baseScore = scoreWithAlphaRank(analysis, profile.category, alphaRankModel);
+        const score = applyEcosystemBonus(baseScore, ecosystemAnalysis.bonus, analysis.constraints.some((constraint) => constraint.blocking));
+        return { cell: feature.properties, score, status: statusForAlphaRankScore(score, analysis), analysis, ecosystem: ecosystemAnalysis };
       })
       .sort((a, b) => b.score - a.score);
-  }, [agroData, alphaRankModel, analysisReady, profile]);
+  }, [agroData, alphaRankModel, analysisReady, ecosystemFeatures, profile]);
 
   const selectedAnalysis = useMemo<SuitabilityAnalysis | null>(() => {
     if (!selectedCell || !agroData) return null;
     return analyzeSuitability(selectedCell, profile, agroData.metadata);
   }, [agroData, profile, selectedCell]);
-  const selectedScore = selectedAnalysis ? scoreWithAlphaRank(selectedAnalysis, profile.category, alphaRankModel) : 0;
+  const selectedEcosystem = useMemo<EcosystemAnalysis>(() => selectedCell
+    ? analyzeEcosystem(selectedCell.latitude, selectedCell.longitude, profile, ecosystemFeatures)
+    : { score: 0, bonus: 0, within50Km: 0, within100Km: 0, nearby: [] }, [ecosystemFeatures, profile, selectedCell]);
+  const selectedBaseScore = selectedAnalysis ? scoreWithAlphaRank(selectedAnalysis, profile.category, alphaRankModel) : 0;
+  const selectedScore = selectedAnalysis
+    ? applyEcosystemBonus(selectedBaseScore, selectedEcosystem.bonus, selectedAnalysis.constraints.some((constraint) => constraint.blocking))
+    : 0;
   const selectedStatus = selectedAnalysis ? statusForAlphaRankScore(selectedScore, selectedAnalysis) : "weak";
 
   const nearestSite = useMemo(() => {
@@ -489,6 +520,23 @@ export default function Home() {
     }).catch((error) => {
       if (!(error instanceof DOMException && error.name === "AbortError")) console.error("Regional data unavailable", error);
     });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/ecosystem", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json() as EcosystemPayload;
+        if (!response.ok && !payload.features?.length) throw new Error("Ecosystem unavailable");
+        setEcosystem(payload);
+      })
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setEcosystem(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setEcosystemLoading(false);
+      });
     return () => controller.abort();
   }, []);
 
@@ -530,6 +578,7 @@ export default function Home() {
         siteLayerRef.current = L.layerGroup().addTo(map);
         regionalLayerRef.current = L.layerGroup().addTo(map);
         liveLayerRef.current = L.layerGroup().addTo(map);
+        ecosystemLayerRef.current = L.layerGroup().addTo(map);
         mapRef.current = map;
         window.setTimeout(() => map.invalidateSize(), 120);
         setMapStatus("ready");
@@ -575,7 +624,7 @@ export default function Home() {
     L.geoJSON(agroData as never, {
       style: (feature) => {
         const cell = (feature?.properties ?? {}) as AgroCellProps;
-        const score = scoreCell(cell, profile, agroData, alphaRankModel);
+        const score = scoreCell(cell, profile, agroData, alphaRankModel, ecosystemFeatures);
         const active = selectedCell?.cell_id === cell.cell_id;
         return {
           color: active ? "#143f39" : "#ffffff",
@@ -587,13 +636,13 @@ export default function Home() {
       },
       onEachFeature: (feature, mapLayer: Layer) => {
         const cell = (feature.properties ?? {}) as AgroCellProps;
-        const score = scoreCell(cell, profile, agroData, alphaRankModel);
+        const score = scoreCell(cell, profile, agroData, alphaRankModel, ecosystemFeatures);
         const level = score >= 75 ? t.excellent : score >= 55 ? t.possible : t.weak;
         mapLayer.bindTooltip(`<strong>${safeProduct}: ${score}/100</strong><br>${escapeHtml(level)}<br>${escapeHtml(t.clickHint)}`, { sticky: true });
         mapLayer.on("click", () => selectCell(cell));
       },
     }).addTo(layer);
-  }, [agroData, alphaRankModel, analysisReady, currentProduct, mapStatus, profile, selectCell, selectedCell?.cell_id, t]);
+  }, [agroData, alphaRankModel, analysisReady, currentProduct, ecosystemFeatures, mapStatus, profile, selectCell, selectedCell?.cell_id, t]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -617,6 +666,49 @@ export default function Home() {
       marker.addTo(layer);
     });
   }, [locale, mapStatus, sites]);
+
+  useEffect(() => {
+    const L = leafletRef.current;
+    const layer = ecosystemLayerRef.current;
+    if (!L || !layer || mapStatus !== "ready") return;
+    layer.clearLayers();
+    if (!ecosystemVisible) return;
+
+    const groups = new Map<string, EcosystemFeature[]>();
+    ecosystemFeatures.forEach((feature) => {
+      const key = `${feature.latitude.toFixed(4)}:${feature.longitude.toFixed(4)}`;
+      groups.set(key, [...(groups.get(key) ?? []), feature]);
+    });
+
+    groups.forEach((features) => {
+      const [first] = features;
+      if (!first) return;
+      const counts = {
+        project: features.filter((feature) => feature.kind === "project").length,
+        company: features.filter((feature) => feature.kind === "company").length,
+        asset: features.filter((feature) => feature.kind === "asset").length,
+      };
+      const exact = features.some((feature) => feature.locationPrecision !== "district");
+      const total = features.length;
+      const markerClass = counts.project ? "project" : counts.company ? "company" : "asset";
+      const icon = L.divIcon({
+        className: "ecosystem-marker-shell",
+        html: `<div class="ecosystem-marker ${markerClass} ${exact ? "exact" : "district"}"><span>✦</span><b>${total > 1 ? total : ""}</b></div>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+      });
+      const heading = locale === "ru"
+        ? `${counts.project} проектов · ${counts.company} компаний · ${counts.asset} активов`
+        : `${counts.project} жоба · ${counts.company} компания · ${counts.asset} актив`;
+      const names = features.slice(0, 4).map((feature) => `<li>${escapeHtml(feature.name)}</li>`).join("");
+      const precision = exact
+        ? (locale === "ru" ? "точка/геометрия подтверждена API" : "нүкте/геометрия API арқылы расталған")
+        : (locale === "ru" ? "районная привязка, не точный адрес" : "аудандық байланыс, нақты мекенжай емес");
+      L.marker([first.latitude, first.longitude], { icon })
+        .bindTooltip(`<strong>${escapeHtml(heading)}</strong><ul class="ecosystem-tooltip-list">${names}</ul><small>${escapeHtml(precision)}</small>`, { direction: "top", opacity: 0.98 })
+        .addTo(layer);
+    });
+  }, [ecosystemFeatures, ecosystemVisible, locale, mapStatus]);
 
   useEffect(() => {
     const L = leafletRef.current;
@@ -731,6 +823,20 @@ export default function Home() {
             infrastructure: selectedAnalysis.distances,
             climate,
             nearbySite: nearestSite ? { name: nearestSite.site.name, distanceKm: Number(nearestSite.distance.toFixed(1)), ownershipStatus: nearestSite.site.ownershipStatus } : null,
+            nearbyEcosystem: {
+              score: selectedEcosystem.score,
+              bonus: selectedEcosystem.bonus,
+              within50Km: selectedEcosystem.within50Km,
+              items: selectedEcosystem.nearby.slice(0, 5).map((item) => ({
+                kind: item.kind,
+                name: item.name,
+                distanceKm: Number(item.distanceKm.toFixed(1)),
+                district: item.district,
+                category: item.category,
+                organization: item.organization,
+                locationPrecision: item.locationPrecision,
+              })),
+            },
           }),
         });
         if (!response.ok) throw new Error("Advisor unavailable");
@@ -742,7 +848,7 @@ export default function Home() {
       }
     }, 350);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [analysisReady, climate, discoveryCellId, liveLoading, locale, nearestSite, profile, selectedAnalysis, selectedCell, selectedScore]);
+  }, [analysisReady, climate, discoveryCellId, liveLoading, locale, nearestSite, profile, selectedAnalysis, selectedCell, selectedEcosystem, selectedScore]);
 
   function completeWizard() {
     setAnalysisReady(true);
@@ -772,6 +878,9 @@ export default function Home() {
       `${locale === "ru" ? "Электросеть" : "Электр желісі"}: ${selectedAnalysis.distances.powerKm ?? "?"} км`,
       `${locale === "ru" ? "Вода/канал" : "Су/канал"}: ${selectedAnalysis.distances.waterKm ?? "?"} км`,
       `${locale === "ru" ? "Железная дорога" : "Теміржол"}: ${selectedAnalysis.distances.railKm ?? "?"} км`,
+      `${locale === "ru" ? "Деловая экосистема" : "Іскерлік экожүйе"}: ${selectedEcosystem.score}/100 (${locale === "ru" ? "вклад" : "үлес"} +${selectedEcosystem.bonus})`,
+      `${locale === "ru" ? "Объектов в радиусе 50 км" : "50 км радиустағы нысандар"}: ${selectedEcosystem.within50Km}`,
+      ...selectedEcosystem.nearby.slice(0, 5).map((item) => `• ${item.name} · ${item.distanceKm.toFixed(1)} км · ${item.district} · ${item.sourceUrl}`),
       "",
       aiAdvice.summary,
       "",
@@ -844,6 +953,7 @@ export default function Home() {
             <div className="map-project-title"><span>{t.mapTitle}</span><strong>{currentProduct}</strong><small>{rankedCells.length} {locale === "ru" ? "проанализированных зон" : "талданған аймақ"}</small></div>
             <div className="network-controls">
               {(["power", "rail", "water"] as const).map((kind) => <button type="button" key={kind} className={`${kind} ${visibleNetworks[kind] ? "active" : ""}`} aria-pressed={visibleNetworks[kind]} onClick={() => setVisibleNetworks((state) => ({ ...state, [kind]: !state[kind] }))}><i />{t[kind]} <b>{liveLoading ? "…" : networkCounts[kind]}</b></button>)}
+              <button type="button" className={`business ${ecosystemVisible ? "active" : ""}`} aria-pressed={ecosystemVisible} onClick={() => setEcosystemVisible((value) => !value)}><i />{locale === "ru" ? "Бизнес-среда" : "Бизнес орта"} <b>{ecosystemLoading ? "…" : ecosystemFeatures.length}</b></button>
             </div>
             <div className="map-legend"><span><i className="excellent" />{t.excellent} 75–100</span><span><i className="possible" />{t.possible} 55–74</span><span><i className="weak" />{t.weak} 0–54</span></div>
           </>}
@@ -864,6 +974,8 @@ export default function Home() {
                   <div className={`connected-data-item ${alphaRankModel ? "" : "fallback"}`}><i /><small>AlphaRank Hybrid</small><strong>{alphaRankModel ? `${alphaRankModel.labelCount} · Guard v3` : locale === "ru" ? `Сбор примеров ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}` : `Мысал жинау ${alphaRankStatus?.labelCount ?? 0}/${alphaRankStatus?.minimumLabels ?? 40}`}</strong></div>
                   <div className={`connected-data-item groq ${aiAdvice?.provider === "rules" ? "fallback" : ""}`}><i /><small>Groq AI</small><strong>{aiLoading ? (locale === "ru" ? "Проверяем…" : "Тексерілуде…") : aiAdvice?.provider === "groq" ? (locale === "ru" ? "Работает" : "Жұмыс істейді") : (locale === "ru" ? "Резервный режим" : "Қосалқы режим")}</strong></div>
                   <div className={`connected-data-item egov ${freeLand?.meta.status ?? "loading"}`}><i /><small>eGov · {locale === "ru" ? "земли" : "жерлер"}</small><strong>{!freeLand ? (locale === "ru" ? "Загружаем…" : "Жүктелуде…") : freeLand.records.length ? `${freeLand.records.length} ${locale === "ru" ? "записей" : "жазба"}` : freeLand.meta.status === "credentials_required" ? (locale === "ru" ? "Нужен API-ключ" : "API кілті қажет") : freeLand.meta.status === "unavailable" ? (locale === "ru" ? "Нет ответа" : "Жауап жоқ") : (locale === "ru" ? "Подключён" : "Қосылды")}</strong></div>
+                  <div className={`connected-data-item business ${ecosystem && ecosystem.meta.status !== "unavailable" ? "" : "unavailable"}`}><i /><small>in-map API</small><strong>{ecosystemLoading ? "…" : ecosystem ? `${ecosystem.meta.projects} ${locale === "ru" ? "проектов" : "жоба"} · ${ecosystem.meta.companies} ${locale === "ru" ? "компаний" : "компания"}` : (locale === "ru" ? "Нет ответа" : "Жауап жоқ")}</strong></div>
+                  <div className={`connected-data-item assets ${ecosystem?.meta.assets ? "" : "unavailable"}`}><i /><small>in-map · {locale === "ru" ? "активы" : "активтер"}</small><strong>{ecosystemLoading ? "…" : ecosystem ? `${ecosystem.meta.assets} ${locale === "ru" ? "объектов" : "нысан"}` : (locale === "ru" ? "Нет ответа" : "Жауап жоқ")}</strong></div>
                   <div className={`connected-data-item climate ${!climateLoading && !climate ? "unavailable" : ""}`}><i /><small>{locale === "ru" ? "Температура" : "Температура"}</small><strong>{climateLoading ? "…" : climate?.temperatureC !== null && climate?.temperatureC !== undefined ? `${climate.temperatureC.toFixed(1)} °C` : "—"}</strong></div>
                   <div className={`connected-data-item climate ${!climateLoading && !climate ? "unavailable" : ""}`}><i /><small>{locale === "ru" ? "Осадки" : "Жауын-шашын"}</small><strong>{climateLoading ? "…" : climate?.precipitationMmDay !== null && climate?.precipitationMmDay !== undefined ? `${climate.precipitationMmDay.toFixed(1)} ${locale === "ru" ? "мм/сут" : "мм/тәул"}` : "—"}</strong></div>
                 </div>
@@ -878,6 +990,8 @@ export default function Home() {
                   [t.water, selectedAnalysis.components.water],
                   [locale === "ru" ? "Логистика" : "Логистика", selectedAnalysis.components.logistics],
                 ] as Array<[string, number]>).map(([label, value]) => <div className="score-component" key={label}><span>{label}</span><i><b style={{ width: `${value}%` }} /></i><strong>{value}</strong></div>)}
+                <div className="score-component ecosystem"><span>{locale === "ru" ? "Деловая среда" : "Іскерлік орта"}</span><i><b style={{ width: `${selectedEcosystem.score}%` }} /></i><strong>{selectedEcosystem.score}<small> +{selectedEcosystem.bonus}</small></strong></div>
+                <p className="ecosystem-score-note">{locale === "ru" ? "Близкие активы, действующие компании и проекты дают прозрачный бонус до 7 баллов, но не отменяют критические ограничения по воде, энергии и логистике." : "Жақын активтер, компаниялар мен жобалар 7 балға дейін ашық бонус береді, бірақ су, энергия және логистика бойынша маңызды шектеулерді жоймайды."}</p>
               </section>
 
               <section className="constraint-section">
@@ -897,6 +1011,37 @@ export default function Home() {
                 <div className="fact-row"><span className="fact-icon power">⚡</span><div><small>{t.power}</small><strong>{selectedAnalysis.distances.powerKm !== null ? `${selectedAnalysis.distances.powerKm} км` : locale === "ru" ? "Нет данных" : "Дерек жоқ"}</strong><em>{locale === "ru" ? "до нанесённой линии/подстанции; мощность не подтверждена" : "картадағы желіге/қосалқы станцияға дейін; қуат расталмаған"}</em></div></div>
                 <div className="fact-row"><span className="fact-icon water">≈</span><div><small>{t.water}</small><strong>{selectedAnalysis.distances.waterKm !== null ? `${selectedAnalysis.distances.waterKm} км` : locale === "ru" ? "Нет данных" : "Дерек жоқ"}</strong><em>{locale === "ru" ? "до нанесённой реки/канала; расход и право не подтверждены" : "картадағы өзенге/каналға дейін; шығын мен құқық расталмаған"}</em></div></div>
                 <div className="fact-row"><span className="fact-icon rail">═</span><div><small>{t.rail}</small><strong>{selectedAnalysis.distances.railKm !== null ? `${selectedAnalysis.distances.railKm} км` : locale === "ru" ? "Нет данных" : "Дерек жоқ"}</strong><em>{locale === "ru" ? "до нанесённой железнодорожной линии" : "картадағы теміржол желісіне дейін"}</em></div></div>
+              </section>
+
+              <section className="ecosystem-section">
+                <div className="ecosystem-heading">
+                  <div><span className="eyebrow">in-map · {locale === "ru" ? "деловая экосистема" : "іскерлік экожүйе"}</span><h3>{locale === "ru" ? "Партнёры, проекты и активы рядом" : "Жақын серіктестер, жобалар және активтер"}</h3></div>
+                  <strong>+{selectedEcosystem.bonus}</strong>
+                </div>
+                <div className="ecosystem-summary">
+                  <span><b>{selectedEcosystem.within50Km}</b>{locale === "ru" ? "до 50 км" : "50 км дейін"}</span>
+                  <span><b>{selectedEcosystem.within100Km}</b>{locale === "ru" ? "до 100 км" : "100 км дейін"}</span>
+                  <span><b>{selectedEcosystem.score}</b>{locale === "ru" ? "сила среды" : "орта күші"}</span>
+                </div>
+                {ecosystemLoading ? <p className="ecosystem-empty">{locale === "ru" ? "Загружаем компании, инвестпроекты и активы…" : "Компаниялар, инвестжобалар мен активтер жүктелуде…"}</p> : selectedEcosystem.nearby.length ? <div className="ecosystem-list">
+                  {selectedEcosystem.nearby.slice(0, 5).map((item) => {
+                    const investment = formatInvestment(item.investment, locale);
+                    const approximate = item.locationPrecision === "district";
+                    return <article className={`ecosystem-card ${item.kind}`} key={item.id}>
+                      <div className="ecosystem-card-top"><span>{ecosystemKindLabel(item.kind, locale)}</span><b>{approximate ? "≈ " : ""}{item.distanceKm.toFixed(1)} {locale === "ru" ? "км" : "км"}</b></div>
+                      <strong>{item.name}</strong>
+                      <p>{item.organization ? `${item.organization} · ` : ""}{item.category}</p>
+                      <small>{item.district}{item.address ? ` · ${item.address}` : ""}</small>
+                      <div className="ecosystem-card-meta">
+                        <span>{item.status}</span>
+                        {investment && <span>{investment}</span>}
+                        {item.jobs !== null && <span>{item.jobs} {locale === "ru" ? "раб. мест" : "жұмыс орны"}</span>}
+                      </div>
+                      <a href={item.sourceUrl} target="_blank" rel="noreferrer">{locale === "ru" ? "Проверить источник" : "Дереккөзді тексеру"} ↗</a>
+                    </article>;
+                  })}
+                </div> : <p className="ecosystem-empty">{locale === "ru" ? "В пределах 220 км подходящие объекты не найдены." : "220 км шегінде сәйкес нысандар табылмады."}</p>}
+                <p className="ecosystem-limitation">{locale === "ru" ? "Точные точки берутся из геометрии проектов. Объекты без координат показаны по району и отмечены знаком ≈; близость означает потенциальный контакт, а не подтверждённое партнёрство." : "Нақты нүктелер жоба геометриясынан алынады. Координатсыз нысандар аудан бойынша көрсетіліп, ≈ белгісімен белгіленеді; жақындық расталған серіктестік емес, ықтимал байланыс."}</p>
               </section>
 
               <section className="climate-section">

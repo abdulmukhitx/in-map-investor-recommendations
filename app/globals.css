@@ -139,6 +139,8 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .network-controls .power.active i { background: var(--orange); }
 .network-controls .rail.active i { background: #394d4a; }
 .network-controls .water.active i { background: var(--blue); }
+.network-controls .business.active { background: #eef0fb; color: #33375f; }
+.network-controls .business.active i { background: #6256a8; box-shadow: 0 0 0 3px rgba(98, 86, 168, 0.12); }
 .network-controls b { min-width: 16px; color: var(--ink); }
 
 .map-legend { position: absolute; z-index: 6; left: 18px; bottom: 18px; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid rgba(15, 27, 61, 0.08); border-radius: 10px; background: rgba(255, 255, 255, 0.95); box-shadow: 0 9px 28px rgba(8, 14, 32, 0.14); font-size: 10px; }
@@ -153,6 +155,16 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .network-marker.power { background: var(--orange); }
 .network-marker.rail { background: #394d4a; }
 .network-marker.water { background: var(--blue); }
+.ecosystem-marker-shell { background: transparent !important; border: 0 !important; }
+.ecosystem-marker { position: relative; width: 34px; height: 34px; display: grid; place-items: center; border: 2px solid #fff; border-radius: 11px; color: #fff; box-shadow: 0 5px 16px rgba(20, 34, 48, 0.26); }
+.ecosystem-marker span { font-size: 14px; line-height: 1; }
+.ecosystem-marker b { position: absolute; top: -7px; right: -7px; min-width: 18px; height: 18px; display: grid; place-items: center; border: 2px solid #fff; border-radius: 9px; background: var(--brand-dark); color: #fff; font-size: 8px; }
+.ecosystem-marker.project { background: #6256a8; }
+.ecosystem-marker.company { background: #237a8f; }
+.ecosystem-marker.asset { background: #16835d; }
+.ecosystem-marker.district { border-style: dashed; opacity: 0.88; }
+.ecosystem-tooltip-list { margin: 5px 0; padding-left: 16px; }
+.ecosystem-tooltip-list li { margin: 2px 0; }
 
 .zone-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .zone-heading h2 { margin: 6px 0 4px; font-size: 20px; line-height: 1.25; letter-spacing: -0.03em; }
@@ -180,6 +192,8 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .connected-data-item.groq i { background: var(--brand-dark); box-shadow: 0 0 0 3px rgba(15, 27, 61, 0.1); }
 .connected-data-item.fallback i, .connected-data-item.credentials_required i { background: var(--amber); box-shadow: 0 0 0 3px rgba(228, 167, 46, 0.12); }
 .connected-data-item.climate i { background: var(--blue); box-shadow: 0 0 0 3px rgba(42, 139, 181, 0.1); }
+.connected-data-item.business i { background: #6256a8; box-shadow: 0 0 0 3px rgba(98, 86, 168, 0.12); }
+.connected-data-item.assets i { background: #16835d; box-shadow: 0 0 0 3px rgba(22, 131, 93, 0.12); }
 .connected-data-item.unavailable i { background: var(--red); box-shadow: 0 0 0 3px rgba(201, 95, 82, 0.1); }
 .connected-data-item small { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .connected-data-item strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -194,6 +208,10 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .score-component > i { height: 5px; overflow: hidden; border-radius: 5px; background: #e5ebe8; }
 .score-component > i > b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #9a7d35, var(--brand)); }
 .score-component > strong { text-align: right; font-size: 9px; }
+.score-component.ecosystem { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.score-component.ecosystem > i > b { background: linear-gradient(90deg, #6256a8, #1a8b70); }
+.score-component.ecosystem > strong small { color: var(--green); font-size: 7px; }
+.ecosystem-score-note { margin: 8px 0 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .constraint-section { margin: 13px 0 17px; }
 .constraint-section h3 { margin-bottom: 8px; font-size: 11px; }
 .constraint-section p { display: grid; grid-template-columns: 20px 1fr; align-items: center; gap: 7px; margin: 6px 0; padding: 8px; border-radius: 9px; font-size: 9px; line-height: 1.4; }
@@ -239,6 +257,30 @@ h1, h2 { font-family: "Manrope", sans-serif; }
 .fact-row small { color: var(--muted); font-size: 9px; }
 .fact-row strong { font-size: 11px; }
 .fact-row em { color: var(--muted); font-size: 8px; font-style: normal; line-height: 1.35; }
+
+.ecosystem-section { margin-top: 17px; padding-top: 17px; border-top: 1px solid var(--line); }
+.ecosystem-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.ecosystem-heading h3 { margin: 5px 0 0; font-size: 14px; line-height: 1.3; }
+.ecosystem-heading > strong { flex: 0 0 auto; min-width: 38px; border-radius: 10px; padding: 8px; background: linear-gradient(135deg, #6256a8, #16835d); color: #fff; text-align: center; font-size: 13px; }
+.ecosystem-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 11px; }
+.ecosystem-summary span { display: flex; flex-direction: column; gap: 2px; border: 1px solid #e1e6ed; border-radius: 9px; padding: 8px; background: #f8f9fc; color: var(--muted); font-size: 7px; text-transform: uppercase; letter-spacing: 0.04em; }
+.ecosystem-summary b { color: var(--ink); font-size: 15px; letter-spacing: -0.02em; }
+.ecosystem-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.ecosystem-card { position: relative; overflow: hidden; border: 1px solid #e0e6e3; border-radius: 11px; padding: 11px 11px 10px 14px; background: #fff; box-shadow: 0 5px 16px rgba(15, 27, 61, 0.04); }
+.ecosystem-card::before { position: absolute; inset: 0 auto 0 0; width: 3px; content: ""; background: #16835d; }
+.ecosystem-card.project::before { background: #6256a8; }
+.ecosystem-card.company::before { background: #237a8f; }
+.ecosystem-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ecosystem-card-top span { border-radius: 12px; padding: 3px 6px; background: #eef0fb; color: #51498b; font-size: 7px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; }
+.ecosystem-card-top b { color: var(--green); font-size: 9px; }
+.ecosystem-card > strong { display: block; margin-top: 7px; font-size: 11px; line-height: 1.35; }
+.ecosystem-card > p { margin: 4px 0 0; color: #445b56; font-size: 9px; line-height: 1.4; }
+.ecosystem-card > small { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.ecosystem-card-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.ecosystem-card-meta span { border-radius: 6px; padding: 4px 6px; background: #f1f5f3; color: #435a55; font-size: 7px; font-weight: 700; }
+.ecosystem-card > a { display: inline-block; margin-top: 8px; color: #51498b; font-size: 8px; font-weight: 800; text-decoration: none; }
+.ecosystem-empty { margin: 10px 0 0; border-radius: 9px; padding: 10px; background: #f4f6f5; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.ecosystem-limitation { margin: 10px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 
 .climate-section { margin-top: 14px; padding-top: 15px; border-top: 1px solid var(--line); }
 .climate-section > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
