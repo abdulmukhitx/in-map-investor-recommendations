@@ -25,6 +25,10 @@ function feature(overrides: Partial<EcosystemFeature> = {}): EcosystemFeature {
     investment: 1_000_000_000,
     jobs: 50,
     sourceUrl: "https://in-map.kz",
+    contactName: null,
+    contactRole: null,
+    phone: null,
+    website: null,
     ...overrides,
   };
 }

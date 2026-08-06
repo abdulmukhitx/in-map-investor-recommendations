@@ -17,6 +17,10 @@ export type EcosystemFeature = {
   investment: number | null;
   jobs: number | null;
   sourceUrl: string;
+  contactName: string | null;
+  contactRole: string | null;
+  phone: string | null;
+  website: string | null;
   facts?: string[];
 };
 

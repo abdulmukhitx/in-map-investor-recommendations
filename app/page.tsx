@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Layer, LayerGroup, Map as LeafletMap } from "leaflet";
+import type { Layer, LayerGroup, Map as LeafletMap, Path, PathOptions } from "leaflet";
 import type { CatalogSite } from "../lib/catalog";
 import type { DataSourceRecord } from "../lib/data-sources";
 import { scoreWithAlphaRank, statusForAlphaRankScore, type AlphaRankModel, type AlphaRankStatus } from "../lib/alpha-rank";
@@ -372,12 +372,57 @@ function ecosystemKindLabel(kind: EcosystemFeature["kind"], locale: Locale) {
   return locale === "ru" ? "Актив" : "Актив";
 }
 
+function ecosystemCategoryLabel(category: string, locale: Locale) {
+  const labels: Record<string, { ru: string; kk: string }> = {
+    agriculture: { ru: "Сельское хозяйство", kk: "Ауыл шаруашылығы" },
+    manufacturing: { ru: "Производство", kk: "Өндіріс" },
+    logistics: { ru: "Логистика", kk: "Логистика" },
+    energy: { ru: "Энергетика", kk: "Энергетика" },
+    tourism: { ru: "Туризм", kk: "Туризм" },
+    bank_collateral: { ru: "Банковская залоговая недвижимость", kk: "Банктің кепіл мүлкі" },
+  };
+  return labels[category]?.[locale] ?? category;
+}
+
 function formatInvestment(value: number | null, locale: Locale) {
   if (value === null) return null;
   const formatter = new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "kk-KZ", { maximumFractionDigits: 1 });
   if (value >= 1_000_000_000) return `${formatter.format(value / 1_000_000_000)} ${locale === "ru" ? "млрд ₸" : "млрд ₸"}`;
   if (value >= 1_000_000) return `${formatter.format(value / 1_000_000)} ${locale === "ru" ? "млн ₸" : "млн ₸"}`;
   return `${formatter.format(value)} ₸`;
+}
+
+function contactHref(value: string | null) {
+  if (!value) return null;
+  const phone = value.replace(/[^+\d]/g, "");
+  return phone ? `tel:${phone}` : null;
+}
+
+function websiteHref(value: string | null) {
+  if (!value) return null;
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
+function ecosystemClusterSize(zoom: number) {
+  if (zoom <= 6) return 0.62;
+  if (zoom === 7) return 0.34;
+  if (zoom === 8) return 0.19;
+  if (zoom === 9) return 0.1;
+  return 0.035;
+}
+
+function clusterEcosystem(features: EcosystemFeature[], zoom: number) {
+  const size = ecosystemClusterSize(zoom);
+  const buckets = new Map<string, EcosystemFeature[]>();
+  features.forEach((feature) => {
+    const key = `${Math.floor(feature.latitude / size)}:${Math.floor(feature.longitude / size)}`;
+    buckets.set(key, [...(buckets.get(key) ?? []), feature]);
+  });
+  return [...buckets.values()].map((items) => ({
+    features: items,
+    latitude: items.reduce((sum, item) => sum + item.latitude, 0) / items.length,
+    longitude: items.reduce((sum, item) => sum + item.longitude, 0) / items.length,
+  }));
 }
 
 function constraintLabel(code: ConstraintCode, locale: Locale, distanceKm?: number) {
@@ -415,6 +460,9 @@ export default function Home() {
   const regionalLayerRef = useRef<LayerGroup | null>(null);
   const liveLayerRef = useRef<LayerGroup | null>(null);
   const ecosystemLayerRef = useRef<LayerGroup | null>(null);
+  const agroFeatureLayersRef = useRef(new Map<string, Path>());
+  const agroBaseStylesRef = useRef(new Map<string, PathOptions>());
+  const selectedAgroIdRef = useRef<string | null>(null);
 
   const [locale, setLocale] = useState<Locale>("ru");
   const [wizardOpen, setWizardOpen] = useState(true);
@@ -440,11 +488,23 @@ export default function Home() {
   const [ecosystem, setEcosystem] = useState<EcosystemPayload | null>(null);
   const [ecosystemLoading, setEcosystemLoading] = useState(true);
   const [ecosystemVisible, setEcosystemVisible] = useState(true);
+  const [ecosystemZoom, setEcosystemZoom] = useState(7);
+  const [selectedEcosystemGroup, setSelectedEcosystemGroup] = useState<EcosystemFeature[]>([]);
+  const [selectedEcosystemItemId, setSelectedEcosystemItemId] = useState<string | null>(null);
 
   const t = text[locale];
   const currentProduct = productName(profile, locale);
   const alphaRankModel = alphaRankStatus?.model ?? null;
   const ecosystemFeatures = useMemo(() => ecosystem?.features ?? [], [ecosystem]);
+  const focusedEcosystemItem = useMemo(() => selectedEcosystemGroup.find((item) => item.id === selectedEcosystemItemId) ?? selectedEcosystemGroup[0] ?? null, [selectedEcosystemGroup, selectedEcosystemItemId]);
+
+  const openEcosystemFeature = useCallback((feature: EcosystemFeature, fly = true) => {
+    setEcosystemVisible(true);
+    setSelectedEcosystemGroup([feature]);
+    setSelectedEcosystemItemId(feature.id);
+    const map = mapRef.current;
+    if (fly && map) map.flyTo([feature.latitude, feature.longitude], Math.max(map.getZoom(), feature.locationPrecision === "district" ? 9 : 11), { duration: 0.45 });
+  }, []);
 
   useEffect(() => {
     if (!wizardOpen) return;
@@ -579,6 +639,7 @@ export default function Home() {
         regionalLayerRef.current = L.layerGroup().addTo(map);
         liveLayerRef.current = L.layerGroup().addTo(map);
         ecosystemLayerRef.current = L.layerGroup().addTo(map);
+        map.on("zoomend", () => setEcosystemZoom(map.getZoom()));
         mapRef.current = map;
         window.setTimeout(() => map.invalidateSize(), 120);
         setMapStatus("ready");
@@ -620,29 +681,48 @@ export default function Home() {
     const layer = agroLayerRef.current;
     if (!L || !layer || !agroData || !analysisReady || mapStatus !== "ready") return;
     layer.clearLayers();
+    agroFeatureLayersRef.current.clear();
+    agroBaseStylesRef.current.clear();
     const safeProduct = escapeHtml(currentProduct);
     L.geoJSON(agroData as never, {
       style: (feature) => {
         const cell = (feature?.properties ?? {}) as AgroCellProps;
         const score = scoreCell(cell, profile, agroData, alphaRankModel, ecosystemFeatures);
-        const active = selectedCell?.cell_id === cell.cell_id;
-        return {
-          color: active ? "#143f39" : "#ffffff",
-          weight: active ? 3 : 0.7,
-          opacity: active ? 1 : 0.65,
+        const baseStyle: PathOptions = {
+          color: "#ffffff",
+          weight: 0.5,
+          opacity: 0.34,
           fillColor: zoneColor(score),
-          fillOpacity: active ? 0.78 : 0.6,
+          fillOpacity: 0.42,
         };
+        return baseStyle;
       },
       onEachFeature: (feature, mapLayer: Layer) => {
         const cell = (feature.properties ?? {}) as AgroCellProps;
         const score = scoreCell(cell, profile, agroData, alphaRankModel, ecosystemFeatures);
+        const baseStyle: PathOptions = { color: "#ffffff", weight: 0.5, opacity: 0.34, fillColor: zoneColor(score), fillOpacity: 0.42 };
+        agroFeatureLayersRef.current.set(cell.cell_id, mapLayer as Path);
+        agroBaseStylesRef.current.set(cell.cell_id, baseStyle);
         const level = score >= 75 ? t.excellent : score >= 55 ? t.possible : t.weak;
         mapLayer.bindTooltip(`<strong>${safeProduct}: ${score}/100</strong><br>${escapeHtml(level)}<br>${escapeHtml(t.clickHint)}`, { sticky: true });
         mapLayer.on("click", () => selectCell(cell));
       },
     }).addTo(layer);
-  }, [agroData, alphaRankModel, analysisReady, currentProduct, ecosystemFeatures, mapStatus, profile, selectCell, selectedCell?.cell_id, t]);
+    const selectedId = selectedAgroIdRef.current;
+    if (selectedId) agroFeatureLayersRef.current.get(selectedId)?.setStyle({ color: "#0f1b3d", weight: 2.4, opacity: 0.9, fillOpacity: 0.7 });
+  }, [agroData, alphaRankModel, analysisReady, currentProduct, ecosystemFeatures, mapStatus, profile, selectCell, t]);
+
+  useEffect(() => {
+    const previousId = selectedAgroIdRef.current;
+    if (previousId) {
+      const previous = agroFeatureLayersRef.current.get(previousId);
+      const previousStyle = agroBaseStylesRef.current.get(previousId);
+      if (previous && previousStyle) previous.setStyle(previousStyle);
+    }
+    const currentId = selectedCell?.cell_id ?? null;
+    if (currentId) agroFeatureLayersRef.current.get(currentId)?.setStyle({ color: "#0f1b3d", weight: 2.4, opacity: 0.9, fillOpacity: 0.7 });
+    selectedAgroIdRef.current = currentId;
+  }, [selectedCell?.cell_id]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -674,13 +754,8 @@ export default function Home() {
     layer.clearLayers();
     if (!ecosystemVisible) return;
 
-    const groups = new Map<string, EcosystemFeature[]>();
-    ecosystemFeatures.forEach((feature) => {
-      const key = `${feature.latitude.toFixed(4)}:${feature.longitude.toFixed(4)}`;
-      groups.set(key, [...(groups.get(key) ?? []), feature]);
-    });
-
-    groups.forEach((features) => {
+    clusterEcosystem(ecosystemFeatures, ecosystemZoom).forEach((group) => {
+      const features = group.features;
       const [first] = features;
       if (!first) return;
       const counts = {
@@ -690,25 +765,35 @@ export default function Home() {
       };
       const exact = features.some((feature) => feature.locationPrecision !== "district");
       const total = features.length;
-      const markerClass = counts.project ? "project" : counts.company ? "company" : "asset";
-      const icon = L.divIcon({
-        className: "ecosystem-marker-shell",
-        html: `<div class="ecosystem-marker ${markerClass} ${exact ? "exact" : "district"}"><span>✦</span><b>${total > 1 ? total : ""}</b></div>`,
-        iconSize: [34, 34],
-        iconAnchor: [17, 17],
-      });
+      const markerColor = counts.project ? "#6256a8" : counts.company ? "#237a8f" : "#16835d";
       const heading = locale === "ru"
         ? `${counts.project} проектов · ${counts.company} компаний · ${counts.asset} активов`
         : `${counts.project} жоба · ${counts.company} компания · ${counts.asset} актив`;
-      const names = features.slice(0, 4).map((feature) => `<li>${escapeHtml(feature.name)}</li>`).join("");
       const precision = exact
         ? (locale === "ru" ? "точка/геометрия подтверждена API" : "нүкте/геометрия API арқылы расталған")
         : (locale === "ru" ? "районная привязка, не точный адрес" : "аудандық байланыс, нақты мекенжай емес");
-      L.marker([first.latitude, first.longitude], { icon })
-        .bindTooltip(`<strong>${escapeHtml(heading)}</strong><ul class="ecosystem-tooltip-list">${names}</ul><small>${escapeHtml(precision)}</small>`, { direction: "top", opacity: 0.98 })
+      const marker = L.circleMarker([group.latitude, group.longitude], {
+        radius: Math.min(17, 6 + Math.sqrt(total) * 1.55),
+        color: "#ffffff",
+        weight: exact ? 2 : 1.5,
+        dashArray: exact ? undefined : "3 2",
+        fillColor: markerColor,
+        fillOpacity: 0.9,
+        bubblingMouseEvents: false,
+      });
+      const clickHint = locale === "ru" ? "Нажмите, чтобы открыть данные" : "Деректерді ашу үшін басыңыз";
+      marker.bindTooltip(`<strong>${escapeHtml(heading)}</strong><br>${total === 1 ? `${escapeHtml(first.name)}<br>` : ""}<small>${escapeHtml(clickHint)} · ${escapeHtml(precision)}</small>`, { direction: "top", opacity: 0.98 });
+      marker.on("click", () => {
+        setSelectedEcosystemGroup(features);
+        setSelectedEcosystemItemId(first.id);
+      });
+      marker.addTo(layer);
+      if (total > 1) L.tooltip({ permanent: true, direction: "center", className: "ecosystem-cluster-count", interactive: false, opacity: 1 })
+        .setLatLng([group.latitude, group.longitude])
+        .setContent(String(total))
         .addTo(layer);
     });
-  }, [ecosystemFeatures, ecosystemVisible, locale, mapStatus]);
+  }, [ecosystemFeatures, ecosystemVisible, ecosystemZoom, locale, mapStatus]);
 
   useEffect(() => {
     const L = leafletRef.current;
@@ -909,12 +994,14 @@ export default function Home() {
   const category = profile.category ? categories.find((item) => item.id === profile.category) : null;
   const goodZones = rankedCells.filter((item) => item.status === "excellent").length;
   const connectedSources = sources.filter((source) => source.status === "connected").length;
+  const focusedInvestment = focusedEcosystemItem ? formatInvestment(focusedEcosystemItem.investment, locale) : null;
+  const focusedPhoneHref = focusedEcosystemItem ? contactHref(focusedEcosystemItem.phone) : null;
+  const focusedWebsiteHref = focusedEcosystemItem ? websiteHref(focusedEcosystemItem.website) : null;
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><img src="/turkistan-invest-logo.png" alt="" /></span><div><strong>TURKISTAN INVEST</strong><small>{t.subtitle}</small></div></div>
-        <div className="region"><span>●</span><div><small>{locale === "ru" ? "Регион" : "Өңір"}</small><strong>{t.region}</strong></div></div>
         <div className="top-actions">
           <div className="language-switch" aria-label={t.language}><button type="button" className={locale === "ru" ? "active" : ""} onClick={() => setLocale("ru")}>РУС</button><button type="button" className={locale === "kk" ? "active" : ""} onClick={() => setLocale("kk")}>ҚАЗ</button></div>
           {analysisReady && <button type="button" className="edit-project" onClick={() => { setWizardStep(1); setWizardOpen(true); }}>{t.editProject}</button>}
@@ -957,6 +1044,34 @@ export default function Home() {
             </div>
             <div className="map-legend"><span><i className="excellent" />{t.excellent} 75–100</span><span><i className="possible" />{t.possible} 55–74</span><span><i className="weak" />{t.weak} 0–54</span></div>
           </>}
+          {focusedEcosystemItem && <aside className="map-business-drawer" aria-label={locale === "ru" ? "Карточка объекта" : "Нысан картасы"}>
+            <div className="business-drawer-heading">
+              <div><span>{ecosystemKindLabel(focusedEcosystemItem.kind, locale)}</span><small>{focusedEcosystemItem.status}</small></div>
+              <button type="button" aria-label={locale === "ru" ? "Закрыть" : "Жабу"} onClick={() => { setSelectedEcosystemGroup([]); setSelectedEcosystemItemId(null); }}>×</button>
+            </div>
+            {selectedEcosystemGroup.length > 1 && <div className="business-object-list" aria-label={locale === "ru" ? "Объекты в этой точке" : "Осы нүктедегі нысандар"}>
+              <strong>{locale === "ru" ? `Объекты в группе: ${selectedEcosystemGroup.length}` : `Топтағы нысандар: ${selectedEcosystemGroup.length}`}</strong>
+              <div>{selectedEcosystemGroup.map((item) => <button type="button" className={item.id === focusedEcosystemItem.id ? "active" : ""} key={item.id} onClick={() => setSelectedEcosystemItemId(item.id)}><span>{ecosystemKindLabel(item.kind, locale)}</span>{item.name}</button>)}</div>
+            </div>}
+            <div className="business-drawer-copy">
+              <h3>{focusedEcosystemItem.name}</h3>
+              <p>{focusedEcosystemItem.organization ? `${focusedEcosystemItem.organization} · ` : ""}{ecosystemCategoryLabel(focusedEcosystemItem.category, locale)}</p>
+              {focusedEcosystemItem.description && <small>{focusedEcosystemItem.description}</small>}
+            </div>
+            <dl className="business-drawer-facts">
+              <div><dt>{locale === "ru" ? "Расположение" : "Орналасуы"}</dt><dd>{focusedEcosystemItem.district}{focusedEcosystemItem.address ? ` · ${focusedEcosystemItem.address}` : ""}</dd></div>
+              {focusedInvestment && <div><dt>{locale === "ru" ? "Инвестиции" : "Инвестиция"}</dt><dd>{focusedInvestment}</dd></div>}
+              {focusedEcosystemItem.jobs !== null && <div><dt>{locale === "ru" ? "Рабочие места" : "Жұмыс орындары"}</dt><dd>{focusedEcosystemItem.jobs}</dd></div>}
+              {(focusedEcosystemItem.contactName || focusedEcosystemItem.contactRole) && <div><dt>{locale === "ru" ? "Контакт" : "Байланыс"}</dt><dd>{focusedEcosystemItem.contactName}{focusedEcosystemItem.contactName && focusedEcosystemItem.contactRole ? " · " : ""}{focusedEcosystemItem.contactRole}</dd></div>}
+            </dl>
+            {focusedEcosystemItem.facts?.length ? <ul className="business-drawer-notes">{focusedEcosystemItem.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul> : null}
+            <div className="business-contact-actions">
+              {focusedPhoneHref && <a className="primary" href={focusedPhoneHref}>{locale === "ru" ? `Позвонить ${focusedEcosystemItem.phone}` : `Қоңырау шалу ${focusedEcosystemItem.phone}`}</a>}
+              {focusedWebsiteHref && <a href={focusedWebsiteHref} target="_blank" rel="noreferrer">{locale === "ru" ? "Сайт организации" : "Ұйым сайты"} ↗</a>}
+              <a href={focusedEcosystemItem.sourceUrl} target="_blank" rel="noreferrer">{focusedEcosystemItem.kind === "asset" ? (/bank_collateral/i.test(focusedEcosystemItem.category) ? (locale === "ru" ? "Страница продажи банка" : "Банктің сату парағы") : (locale === "ru" ? "Открыть страницу объекта" : "Нысан парағын ашу")) : (locale === "ru" ? "Проверить в источнике" : "Дереккөзде тексеру")} ↗</a>
+            </div>
+            <p className="business-location-note">{focusedEcosystemItem.locationPrecision === "district" ? (locale === "ru" ? "≈ Показана районная привязка: перед визитом уточните точный адрес у владельца." : "≈ Аудандық байланыс көрсетілген: бармас бұрын нақты мекенжайды иесінен анықтаңыз.") : (locale === "ru" ? "Координаты получены из геометрии проекта в API." : "Координаттар API-дегі жоба геометриясынан алынды.")}</p>
+          </aside>}
         </section>
 
         <aside className="advice-panel">
@@ -1028,16 +1143,19 @@ export default function Home() {
                     const investment = formatInvestment(item.investment, locale);
                     const approximate = item.locationPrecision === "district";
                     return <article className={`ecosystem-card ${item.kind}`} key={item.id}>
-                      <div className="ecosystem-card-top"><span>{ecosystemKindLabel(item.kind, locale)}</span><b>{approximate ? "≈ " : ""}{item.distanceKm.toFixed(1)} {locale === "ru" ? "км" : "км"}</b></div>
-                      <strong>{item.name}</strong>
-                      <p>{item.organization ? `${item.organization} · ` : ""}{item.category}</p>
-                      <small>{item.district}{item.address ? ` · ${item.address}` : ""}</small>
-                      <div className="ecosystem-card-meta">
-                        <span>{item.status}</span>
-                        {investment && <span>{investment}</span>}
-                        {item.jobs !== null && <span>{item.jobs} {locale === "ru" ? "раб. мест" : "жұмыс орны"}</span>}
-                      </div>
-                      <a href={item.sourceUrl} target="_blank" rel="noreferrer">{locale === "ru" ? "Проверить источник" : "Дереккөзді тексеру"} ↗</a>
+                      <button type="button" className="ecosystem-card-main" onClick={() => openEcosystemFeature(item)}>
+                        <span className="ecosystem-card-top"><span>{ecosystemKindLabel(item.kind, locale)}</span><b>{approximate ? "≈ " : ""}{item.distanceKm.toFixed(1)} {locale === "ru" ? "км" : "км"}</b></span>
+                        <strong>{item.name}</strong>
+                        <span className="ecosystem-card-category">{item.organization ? `${item.organization} · ` : ""}{ecosystemCategoryLabel(item.category, locale)}</span>
+                        <small>{item.district}{item.address ? ` · ${item.address}` : ""}</small>
+                        <span className="ecosystem-card-meta">
+                          <span>{item.status}</span>
+                          {investment && <span>{investment}</span>}
+                          {item.jobs !== null && <span>{item.jobs} {locale === "ru" ? "раб. мест" : "жұмыс орны"}</span>}
+                        </span>
+                        <em>{locale === "ru" ? "Открыть карточку и контакты" : "Карточка мен байланысты ашу"} →</em>
+                      </button>
+                      <a href={item.sourceUrl} target="_blank" rel="noreferrer" aria-label={locale === "ru" ? "Открыть источник" : "Дереккөзді ашу"}>↗</a>
                     </article>;
                   })}
                 </div> : <p className="ecosystem-empty">{locale === "ru" ? "В пределах 220 км подходящие объекты не найдены." : "220 км шегінде сәйкес нысандар табылмады."}</p>}

@@ -37,10 +37,20 @@ type ApiCompany = {
   activity_type?: string | null;
   legal_address?: string | null;
   actual_address?: string | null;
+  contact_person?: string | null;
+  phone?: string | null;
+  website?: string | null;
   status?: string;
   status_label?: string;
   region?: ApiRegion;
   projects_count?: number;
+};
+type ApiContact = {
+  full_name?: string | null;
+  name?: string | null;
+  phone?: string | null;
+  position?: string | null;
+  baskarma_type?: string | null;
 };
 type ApiProject = {
   id: number;
@@ -48,7 +58,13 @@ type ApiProject = {
   description?: string | null;
   company_id?: number | null;
   company_name_snapshot?: string | null;
-  company?: { name?: string; display_name?: string } | null;
+  company?: {
+    name?: string;
+    display_name?: string;
+    contact_person?: string | null;
+    phone?: string | null;
+    website?: string | null;
+  } | null;
   region?: ApiRegion;
   primary_project_type?: { name?: string } | null;
   status?: string;
@@ -60,6 +76,9 @@ type ApiProject = {
   prom_zones?: Array<{ name?: string }>;
   sezs?: Array<{ name?: string }>;
   production_plans?: Array<{ product_name?: string; legacy_value?: string | null }>;
+  investors?: ApiContact[];
+  executors?: ApiContact[];
+  curators?: ApiContact[];
   updated_at?: string;
 };
 type ApiPage<T> = { data?: T[]; meta?: { current_page?: number; last_page?: number; total?: number } };
@@ -129,6 +148,24 @@ function statusLabel(status: string | undefined, fallback: string | null | undef
   return status || "Статус не указан";
 }
 
+function projectContact(project: ApiProject) {
+  if (clean(project.company?.phone, 80)) {
+    return {
+      name: clean(project.company?.contact_person, 120),
+      role: "Контакт компании",
+      phone: clean(project.company?.phone, 80),
+    };
+  }
+  const contact = [...(project.investors ?? []), ...(project.executors ?? []), ...(project.curators ?? [])]
+    .find((item) => clean(item.phone, 80));
+  if (!contact) return { name: null, role: null, phone: null };
+  return {
+    name: clean(contact.full_name ?? contact.name, 120),
+    role: clean(contact.position ?? contact.baskarma_type, 120),
+    phone: clean(contact.phone, 80),
+  };
+}
+
 async function fetchApiPage<T>(path: string, token: string, page: number) {
   const endpoint = new URL(`${INMAP_API}/${path}`);
   endpoint.searchParams.set("per_page", "100");
@@ -161,6 +198,7 @@ function normalizeProject(project: ApiProject): EcosystemFeature | null {
     .map((item) => clean(item.name, 80)).filter(Boolean).join(", ");
   const production = (project.production_plans ?? []).slice(0, 2)
     .map((item) => [clean(item.product_name, 100), clean(item.legacy_value, 80)].filter(Boolean).join(" · ")).filter(Boolean).join("; ");
+  const contact = projectContact(project);
   return {
     id: `project-${project.id}`,
     kind: "project",
@@ -177,6 +215,10 @@ function normalizeProject(project: ApiProject): EcosystemFeature | null {
     investment: finiteNumber(project.total_investment),
     jobs: finiteNumber(project.jobs_count),
     sourceUrl: "https://in-map.kz",
+    contactName: contact.name,
+    contactRole: contact.role,
+    phone: contact.phone,
+    website: clean(project.company?.website, 220),
   };
 }
 
@@ -204,6 +246,10 @@ function normalizeCompany(company: ApiCompany, projects: ApiProject[]): Ecosyste
     investment: null,
     jobs: null,
     sourceUrl: "https://in-map.kz",
+    contactName: clean(company.contact_person, 120),
+    contactRole: company.contact_person ? "Контакт компании" : null,
+    phone: clean(company.phone, 80),
+    website: clean(company.website, 220),
   };
 }
 
@@ -226,6 +272,10 @@ function normalizeAsset(asset: AssetRecord): EcosystemFeature | null {
     investment: null,
     jobs: null,
     sourceUrl: asset.sourceUrl || ASSETS_URL,
+    contactName: null,
+    contactRole: null,
+    phone: null,
+    website: null,
     facts: (asset.facts ?? []).filter((item): item is string => typeof item === "string").slice(0, 4),
   };
 }

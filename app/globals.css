@@ -486,3 +486,110 @@ h1, h2 { font-family: "Manrope", sans-serif; }
   .lab-versus { margin: -5px auto; }
   .lab-footer-actions { align-items: flex-start; flex-direction: column; }
 }
+
+/* Professional investor workspace */
+.topbar {
+  height: 64px;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  padding-inline: 28px;
+  background: #0f1b3d;
+  border-bottom-color: rgba(200, 164, 78, 0.55);
+  box-shadow: 0 4px 14px rgba(8, 14, 32, 0.18);
+}
+.brand-mark { width: 38px; height: 38px; border-radius: 6px; box-shadow: none; }
+.brand-mark img { width: 31px; height: 31px; }
+.edit-project { border-radius: 5px; padding: 9px 14px; box-shadow: none; }
+.language-switch, .language-switch button { border-radius: 5px; }
+.investor-workspace { height: calc(100vh - 64px); grid-template-columns: 276px minmax(480px, 1fr) 380px; }
+.project-panel, .advice-panel { background: #fcfcfb; }
+.panel-scroll { padding: 24px 20px 32px; }
+.advice-scroll { padding: 22px 22px 36px; }
+.project-summary, .top-zone-list button, .connected-data-overview, .score-breakdown, .human-list, .ecosystem-summary span, .ecosystem-card, .climate-grid span, .ownership-section > div, .free-land-data, .technical-grid div { border-radius: 5px; box-shadow: none; }
+.top-zone-list button { border-color: #d7dce3; }
+.top-zone-list button.active { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
+.map-stage { background: #e9e7df; }
+.leaflet-tile-pane { filter: saturate(0.55) contrast(0.94) brightness(1.04); }
+.leaflet-tooltip { border: 1px solid #d7dce3 !important; border-radius: 4px !important; box-shadow: 0 5px 14px rgba(15, 27, 61, 0.13) !important; }
+.ecosystem-cluster-count { padding: 0 !important; border: 0 !important; background: transparent !important; color: #fff !important; box-shadow: none !important; font-size: 8px !important; font-weight: 900 !important; pointer-events: none !important; }
+.ecosystem-cluster-count::before { display: none !important; }
+.map-project-title { top: 16px; left: 16px; border-radius: 5px; padding: 12px 14px; box-shadow: 0 6px 18px rgba(8, 14, 32, 0.18); backdrop-filter: none; }
+.network-controls { top: 16px; right: 16px; border-radius: 5px; padding: 4px; box-shadow: 0 5px 16px rgba(15, 27, 61, 0.12); backdrop-filter: none; }
+.network-controls button { border-radius: 3px; }
+.map-legend { left: 16px; bottom: 16px; border-radius: 4px; box-shadow: 0 5px 16px rgba(15, 27, 61, 0.11); }
+.map-legend i { border-radius: 1px; }
+.plain-verdict, .connected-data-item, .connected-data-heading span, .constraint-section p, .constraint-section p b, .ecosystem-heading > strong, .ecosystem-card-top span, .ecosystem-card-meta span { border-radius: 4px; }
+
+.map-business-drawer {
+  position: absolute;
+  z-index: 700;
+  top: 74px;
+  right: 16px;
+  width: min(370px, calc(100% - 32px));
+  max-height: calc(100% - 144px);
+  overflow-y: auto;
+  border: 1px solid #cfd6dd;
+  border-top: 3px solid var(--brand);
+  border-radius: 5px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 36px rgba(15, 27, 61, 0.22);
+  scrollbar-width: thin;
+}
+.business-drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 11px; border-bottom: 1px solid var(--line); }
+.business-drawer-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.business-drawer-heading span { color: #8a6c26; font-size: 9px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.business-drawer-heading small { color: var(--green); font-size: 10px; font-weight: 700; }
+.business-drawer-heading button { width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.business-object-list { margin: 11px 0; padding-bottom: 11px; border-bottom: 1px solid var(--line); }
+.business-object-list > strong { display: block; margin-bottom: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; }
+.business-object-list > div { max-height: 122px; overflow-y: auto; border: 1px solid var(--line); }
+.business-object-list button { width: 100%; display: grid; grid-template-columns: 64px 1fr; gap: 8px; border: 0; border-bottom: 1px solid var(--line); padding: 7px 8px; background: #fff; text-align: left; font-size: 9px; line-height: 1.35; cursor: pointer; }
+.business-object-list button:last-child { border-bottom: 0; }
+.business-object-list button.active { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(--brand); }
+.business-object-list button span { color: var(--muted); font-size: 7px; font-weight: 800; text-transform: uppercase; }
+.business-drawer-copy h3 { margin: 12px 0 5px; font: 700 17px/1.3 "Manrope", sans-serif; }
+.business-drawer-copy p { margin: 0; color: #334a46; font-size: 10px; line-height: 1.45; }
+.business-drawer-copy > small { display: block; margin-top: 7px; color: var(--muted); font-size: 9px; line-height: 1.5; }
+.business-drawer-facts { margin: 13px 0 0; border-top: 1px solid var(--line); }
+.business-drawer-facts > div { display: grid; grid-template-columns: 92px 1fr; gap: 9px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.business-drawer-facts dt { color: var(--muted); font-size: 8px; }
+.business-drawer-facts dd { margin: 0; font-size: 9px; font-weight: 600; line-height: 1.45; }
+.business-drawer-notes { margin: 10px 0 0; padding: 9px 9px 9px 24px; background: #f4f6f5; color: #425753; font-size: 8px; line-height: 1.5; }
+.business-contact-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+.business-contact-actions a { display: grid; place-items: center; min-height: 34px; border: 1px solid #cfd6dd; border-radius: 3px; padding: 7px; background: #fff; color: var(--ink); text-align: center; font-size: 8px; font-weight: 800; line-height: 1.3; text-decoration: none; }
+.business-contact-actions a.primary { grid-column: 1 / -1; border-color: var(--green); background: var(--green); color: #fff; }
+.business-location-note { margin: 10px 0 0; padding-left: 8px; border-left: 2px solid var(--brand); color: var(--muted); font-size: 8px; line-height: 1.45; }
+
+.ecosystem-card { padding: 0 32px 0 4px; }
+.ecosystem-card-main { width: 100%; display: block; border: 0; padding: 11px 10px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.ecosystem-card-main:hover strong { color: var(--green); }
+.ecosystem-card-main > strong { display: block; margin-top: 7px; font-size: 11px; line-height: 1.35; }
+.ecosystem-card-category { display: block; margin-top: 4px; color: #445b56; font-size: 9px; line-height: 1.4; }
+.ecosystem-card-main > small { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.ecosystem-card-main > em { display: block; margin-top: 8px; color: var(--green); font-size: 8px; font-style: normal; font-weight: 800; }
+.ecosystem-card > a { position: absolute; top: 9px; right: 8px; width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 3px; color: #51498b; font-size: 10px; font-weight: 800; text-decoration: none; }
+
+@media (max-width: 1180px) {
+  .investor-workspace { grid-template-columns: 250px minmax(420px, 1fr) 340px; }
+  .network-controls { top: 84px; }
+  .map-business-drawer { top: 208px; }
+}
+
+@media (max-width: 1500px) and (min-width: 1181px) {
+  .network-controls { top: 82px; }
+  .map-business-drawer { top: 136px; }
+}
+
+@media (max-width: 920px) {
+  .app-shell { height: auto; }
+  .topbar { height: 64px; }
+  .investor-workspace { height: auto; grid-template-columns: 240px minmax(0, 1fr); grid-template-rows: 620px auto; }
+  .map-business-drawer { top: 158px; max-height: 390px; }
+}
+
+@media (max-width: 680px) {
+  .topbar { padding-inline: 12px; }
+  .map-business-drawer { position: absolute; inset: auto 10px 70px; width: auto; max-height: 330px; }
+  .business-contact-actions { grid-template-columns: 1fr; }
+  .business-contact-actions a.primary { grid-column: auto; }
+}
