@@ -291,12 +291,12 @@ async function buildPayload(): Promise<EcosystemPayload> {
 
 export async function GET() {
   if (cached && cached.expiresAt > Date.now()) {
-    return Response.json(cached.payload, { headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=900" } });
+    return Response.json(cached.payload, { headers: { "Cache-Control": "no-store" } });
   }
   const payload = await buildPayload();
   if (payload.features.length) cached = { expiresAt: Date.now() + CACHE_TTL_MS, payload };
   return Response.json(payload, {
     status: payload.meta.status === "unavailable" ? 503 : 200,
-    headers: { "Cache-Control": "public, max-age=300, stale-while-revalidate=900" },
+    headers: { "Cache-Control": "no-store" },
   });
 }

@@ -525,7 +525,7 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/ecosystem", { cache: "no-store", signal: controller.signal })
+    fetch("/api/ecosystem-context", { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         const payload = await response.json() as EcosystemPayload;
         if (!response.ok && !payload.features?.length) throw new Error("Ecosystem unavailable");
