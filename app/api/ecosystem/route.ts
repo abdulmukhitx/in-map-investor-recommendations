@@ -1,4 +1,5 @@
 import type { EcosystemFeature, EcosystemLocationPrecision, EcosystemPayload } from "../../../lib/ecosystem";
+import fallbackAssets from "../../../public/data/turkestan-assets.json";
 
 const ASSETS_URL = "https://in-map-kazakhstan-trade-2026.chatgpt-edu-7368.chatgpt.site/data/turkestan-assets.json";
 const INMAP_API = "https://in-map.kz/api/v1";
@@ -232,12 +233,13 @@ function normalizeAsset(asset: AssetRecord): EcosystemFeature | null {
 async function buildPayload(): Promise<EcosystemPayload> {
   const warnings: string[] = [];
   const token = process.env.INMAP_API_TOKEN?.trim();
-  let assets: AssetRecord[] = [];
+  const localAssets = fallbackAssets as AssetsPayload;
+  let assets: AssetRecord[] = localAssets.assets ?? [];
   let companies: ApiCompany[] = [];
   let projects: ApiProject[] = [];
-  let assetsConnected = false;
+  let assetsConnected = assets.length > 0;
   let apiConnected = false;
-  let assetsUpdatedAt: string | undefined;
+  let assetsUpdatedAt: string | undefined = localAssets.metadata?.updatedAt;
 
   const assetsPromise = fetch(ASSETS_URL, { signal: AbortSignal.timeout(14000) })
     .then(async (response) => {
@@ -247,7 +249,7 @@ async function buildPayload(): Promise<EcosystemPayload> {
       assetsUpdatedAt = payload.metadata?.updatedAt;
       assetsConnected = true;
     })
-    .catch(() => warnings.push("Каталог активов временно недоступен."));
+    .catch(() => warnings.push("Онлайн-каталог активов временно недоступен; используется проверенный локальный снимок."));
 
   const apiPromise = token
     ? Promise.all([fetchAllPages<ApiCompany>("companies", token), fetchAllPages<ApiProject>("projects", token)])
